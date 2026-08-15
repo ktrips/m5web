@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>m5web</title>
+<style>
+  :root {
+    --bg: #17181c;
+    --card: #232429;
+    --border: #34363d;
+    --text: #eee;
+    --sub: #9a9ca3;
+    --accent: #3d8bfd;
+    --accent-dim: #2a4f80;
+    --ok: #35c46a;
+    --warn: #e0a531;
+    --err: #e0524f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px 16px 48px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .wrap { width: 100%; max-width: 460px; }
+  h1 { font-size: 22px; margin: 4px 0 0; text-align: center; }
+  .sub { text-align: center; color: var(--sub); margin: 0 0 20px; font-size: 13px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; padding: 6px 10px; border-radius: 20px;
+    background: #2a2c33; color: var(--sub);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sub); }
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  label { display: block; font-size: 13px; color: var(--sub); margin: 10px 0 4px; }
+  input[type=text], input[type=password], select, textarea {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: #1b1c20; color: var(--text);
+    font-size: 15px;
+  }
+  textarea { resize: vertical; min-height: 70px; font-family: inherit; }
+  input[type=file] { display: none; }
+  .file-btn, button {
+    border: none; border-radius: 8px; padding: 11px 16px;
+    font-size: 15px; cursor: pointer; font-weight: 600;
+  }
+  button.primary, .file-btn.primary { background: var(--accent); color: #fff; }
+  button.secondary { background: #2f3138; color: var(--text); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.full, .file-btn.full { width: 100%; text-align: center; display: block; }
+  .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+  .btn-row > * { flex: 1; }
+  .preview-wrap {
+    margin-top: 12px; background: #fff; border-radius: 8px; overflow: hidden;
+    display: flex; justify-content: center; min-height: 40px;
+  }
+  #previewCanvas { max-width: 100%; image-rendering: pixelated; display: block; }
+  .meta { font-size: 12px; color: var(--sub); margin-top: 8px; }
+  .msg { font-size: 13px; margin-top: 10px; padding: 8px 10px; border-radius: 8px; display: none; }
+  .msg.show { display: block; }
+  .msg.ok { background: rgba(53,196,106,.15); color: var(--ok); }
+  .msg.err { background: rgba(224,82,79,.15); color: var(--err); }
+  .msg.info { background: rgba(61,139,253,.15); color: var(--accent); }
+  progress { width: 100%; height: 8px; margin-top: 8px; accent-color: var(--accent); display: none; }
+  progress.show { display: block; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .radio-line { display: flex; align-items: center; gap: 6px; font-size: 14px; margin: 6px 0; }
+  .hidden { display: none !important; }
+  footer { text-align: center; color: var(--sub); font-size: 11px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>m5web</h1>
+  <p class="sub">ATOM Printer 経由でサーマルプリンター印刷</p>
+
+  <div class="card">
+    <div class="row">
+      <span class="badge"><span class="dot" id="statusDot"></span><span id="statusText">確認中…</span></span>
+      <span class="badge" id="ipBadge"></span>
+    </div>
+  </div>
+
+  <div class="card hidden" id="wifiCard">
+    <h2>Wi-Fi 設定</h2>
+    <p class="meta">本機がまだWi-Fiに接続されていません。接続先を選ぶとホームネットワークに参加します。</p>
+    <label>ネットワーク</label>
+    <select id="wifiSelect"><option value="">スキャン中…</option></select>
+    <div class="radio-line">
+      <input type="checkbox" id="manualSsidToggle">
+      <label for="manualSsidToggle" style="margin:0;color:var(--text)">SSIDを手入力する</label>
+    </div>
+    <input type="text" id="manualSsid" placeholder="SSID" class="hidden">
+    <label>パスワード</label>
+    <input type="password" id="wifiPass" placeholder="Wi-Fiパスワード">
+    <button class="primary full" id="wifiConnectBtn" style="margin-top:12px">接続する</button>
+    <div class="msg" id="wifiMsg"></div>
+    <p class="meta">接続に成功すると本機のAPは終了します。iPhoneを同じWi-Fiに繋ぎ直し、<b>http://m5web.local</b> を開いてください。</p>
+  </div>
+
+  <div class="card">
+    <h2>画像を印刷</h2>
+    <label class="file-btn primary full" for="fileInput">写真を選択…</label>
+    <input type="file" id="fileInput" accept="image/*">
+
+    <div class="preview-wrap hidden" id="previewWrap">
+      <canvas id="previewCanvas"></canvas>
+    </div>
+
+    <div id="imageControls" class="hidden">
+      <div class="grid2">
+        <div>
+          <label>変換方式</label>
+          <select id="ditherMode">
+            <option value="fs" selected>誤差拡散 (写真向け)</option>
+            <option value="ordered">ドット網掛け</option>
+            <option value="threshold">2値化 (文字/線画向け)</option>
+          </select>
+        </div>
+        <div>
+          <label>回転</label>
+          <button type="button" class="secondary full" id="rotateBtn">90°回転</button>
+        </div>
+      </div>
+      <label>明るさ <span id="brightnessVal">0</span></label>
+      <input type="range" id="brightness" min="-100" max="100" value="0">
+      <label>コントラスト <span id="contrastVal">0</span></label>
+      <input type="range" id="contrast" min="-100" max="100" value="0">
+      <div class="radio-line">
+        <input type="checkbox" id="invert">
+        <label for="invert" style="margin:0;color:var(--text)">反転（白黒逆）</label>
+      </div>
+      <p class="meta" id="imageMeta"></p>
+      <button class="primary full" id="printImageBtn" style="margin-top:8px">この画像を印刷</button>
+      <progress id="imageProgress" max="100" value="0"></progress>
+      <div class="msg" id="imageMsg"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Put TEXT for print</h2>
+    <textarea id="textInput" placeholder="ここに印刷したい文章を入力…"></textarea>
+    <button class="primary full" id="printTextBtn" style="margin-top:10px">Print TEXT</button>
+    <div class="msg" id="textMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>QRコードを印刷</h2>
+    <p class="meta">URLなどのテキストをQRコードに変換してプリントします（変換はプリンター本体が行います）。</p>
+    <input type="text" id="qrInput" placeholder="https://example.com">
+    <button class="primary full" id="printQrBtn" style="margin-top:10px">QRコードを印刷</button>
+    <div class="msg" id="qrMsg"></div>
+  </div>
+
+  <footer>m5web · M5Stack ATOM Printer</footer>
+</div>
+
+<script>
+"use strict";
+
+const PRINT_WIDTH = 384; // fixed by the 58mm print head, see printer.h
+let maxHeightDots = 2000;
+
+function $(id) { return document.getElementById(id); }
+
+function showMsg(el, text, kind) {
+  el.textContent = text;
+  el.className = "msg show " + kind;
+}
+
+// ---------- status / wifi ----------
+
+async function refreshStatus() {
+  try {
+    const r = await fetch("/api/status");
+    const s = await r.json();
+    maxHeightDots = s.maxHeightDots || maxHeightDots;
+
+    const dot = $("statusDot");
+    const text = $("statusText");
+    const ipBadge = $("ipBadge");
+    if (s.connected) {
+      dot.className = "dot ok";
+      text.textContent = "Wi-Fi接続中: " + s.ssid;
+      ipBadge.textContent = s.ip;
+      $("wifiCard").classList.add("hidden");
+    } else if (s.mode === "ap") {
+      dot.className = "dot warn";
+      text.textContent = "設定モード (AP: " + s.apSsid + ")";
+      ipBadge.textContent = s.ip;
+      $("wifiCard").classList.remove("hidden");
+      loadWifiScan();
+    } else {
+      dot.className = "dot";
+      text.textContent = "接続中…";
+      ipBadge.textContent = "";
+    }
+  } catch (e) {
+    $("statusText").textContent = "通信エラー";
+  }
+}
+
+let scanLoaded = false;
+async function loadWifiScan() {
+  if (scanLoaded) return;
+  scanLoaded = true;
+  const sel = $("wifiSelect");
+  try {
+    const r = await fetch("/api/wifi/scan");
+    const list = await r.json();
+    sel.innerHTML = "";
+    if (list.length === 0) {
+      sel.innerHTML = '<option value="">見つかりませんでした</option>';
+    }
+    list.sort((a, b) => b.rssi - a.rssi).forEach((n) => {
+      const opt = document.createElement("option");
+      opt.value = n.ssid;
+      opt.textContent = n.ssid + (n.open ? "" : " 🔒");
+      sel.appendChild(opt);
+    });
+  } catch (e) {
+    sel.innerHTML = '<option value="">スキャン失敗</option>';
+    scanLoaded = false;
+  }
+}
+
+$("manualSsidToggle").addEventListener("change", (e) => {
+  $("manualSsid").classList.toggle("hidden", !e.target.checked);
+  $("wifiSelect").classList.toggle("hidden", e.target.checked);
+});
+
+$("wifiConnectBtn").addEventListener("click", async () => {
+  const manual = $("manualSsidToggle").checked;
+  const ssid = manual ? $("manualSsid").value.trim() : $("wifiSelect").value;
+  const pass = $("wifiPass").value;
+  const msg = $("wifiMsg");
+  if (!ssid) {
+    showMsg(msg, "SSIDを入力してください", "err");
+    return;
+  }
+  $("wifiConnectBtn").disabled = true;
+  showMsg(msg, "接続中…", "info");
+  try {
+    const r = await fetch("/api/wifi", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "ssid=" + encodeURIComponent(ssid) + "&password=" + encodeURIComponent(pass),
+    });
+    const body = await r.text();
+    if (r.ok) {
+      showMsg(msg, "接続成功。iPhoneのWi-Fiを切り替えて http://m5web.local を開いてください。", "ok");
+    } else {
+      showMsg(msg, "接続失敗: " + body, "err");
+    }
+  } catch (e) {
+    showMsg(msg, "本機のAPが終了したため通信できません。iPhoneのWi-Fiを確認してください。", "info");
+  } finally {
+    $("wifiConnectBtn").disabled = false;
+  }
+});
+
+// ---------- image pipeline ----------
+
+let sourceImg = null;
+let rotation = 0; // 0/90/180/270
+let packedBits = null;
+let packedW = 0, packedH = 0;
+
+$("fileInput").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => {
+    sourceImg = img;
+    rotation = 0;
+    $("previewWrap").classList.remove("hidden");
+    $("imageControls").classList.remove("hidden");
+    renderPreview();
+  };
+  img.src = URL.createObjectURL(file);
+});
+
+$("rotateBtn").addEventListener("click", () => {
+  rotation = (rotation + 90) % 360;
+  renderPreview();
+});
+
+["ditherMode", "brightness", "contrast", "invert"].forEach((id) => {
+  $(id).addEventListener("input", renderPreview);
+});
+
+function targetSizeFor(img, rot) {
+  const rotated = rot === 90 || rot === 270;
+  const srcW = rotated ? img.naturalHeight : img.naturalWidth;
+  const srcH = rotated ? img.naturalWidth : img.naturalHeight;
+  const w = PRINT_WIDTH;
+  const h = Math.round((w * srcH) / srcW);
+  return { w, h };
+}
+
+// Draws `img`, rotated by `rot` degrees, scaled to fill a w x h canvas.
+function drawRotatedScaled(img, rot, w, h) {
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate((rot * Math.PI) / 180);
+  if (rot === 90 || rot === 270) {
+    ctx.drawImage(img, -h / 2, -w / 2, h, w);
+  } else {
+    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+  }
+  ctx.restore();
+  return canvas;
+}
+
+function toGrayscale(imageData, brightness, contrast, invert) {
+  const { data, width, height } = imageData;
+  const gray = new Float32Array(width * height);
+  const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+  for (let i = 0, p = 0; p < data.length; i++, p += 4) {
+    let g = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+    g = factor * (g - 128) + 128 + brightness;
+    if (invert) g = 255 - g;
+    gray[i] = Math.max(0, Math.min(255, g));
+  }
+  return gray;
+}
+
+// Floyd-Steinberg error diffusion. Mutates `gray` in place; returns 1=black bitmap.
+function ditherFloydSteinberg(gray, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const old = gray[i];
+      const black = old < 128;
+      out[i] = black ? 1 : 0;
+      const err = old - (black ? 0 : 255);
+      if (x + 1 < w) gray[i + 1] += (err * 7) / 16;
+      if (y + 1 < h) {
+        if (x > 0) gray[i + w - 1] += (err * 3) / 16;
+        gray[i + w] += (err * 5) / 16;
+        if (x + 1 < w) gray[i + w + 1] += (err * 1) / 16;
+      }
+    }
+  }
+  return out;
+}
+
+const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+function ditherOrdered(gray, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const threshold = ((BAYER4[(y % 4) * 4 + (x % 4)] + 0.5) / 16) * 255;
+      out[i] = gray[i] < threshold ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+function ditherThreshold(gray, w, h) {
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) out[i] = gray[i] < 128 ? 1 : 0;
+  return out;
+}
+
+function packBits(bin, w, h) {
+  const bytesPerRow = w / 8;
+  const out = new Uint8Array(bytesPerRow * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (bin[y * w + x]) {
+        out[y * bytesPerRow + (x >> 3)] |= 0x80 >> (x & 7);
+      }
+    }
+  }
+  return out;
+}
+
+function drawBitmapToPreview(bin, w, h) {
+  const canvas = $("previewCanvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(w, h);
+  for (let i = 0; i < w * h; i++) {
+    const v = bin[i] ? 0 : 255;
+    img.data[i * 4] = v;
+    img.data[i * 4 + 1] = v;
+    img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  // scale up in CSS for visibility on small images
+  canvas.style.width = Math.min(360, w * 2) + "px";
+}
+
+function renderPreview() {
+  if (!sourceImg) return;
+  let { w, h } = targetSizeFor(sourceImg, rotation);
+  let truncated = false;
+  if (h > maxHeightDots) {
+    h = maxHeightDots;
+    truncated = true;
+  }
+
+  const scaled = drawRotatedScaled(sourceImg, rotation, w, h);
+  const ctx = scaled.getContext("2d");
+  const imageData = ctx.getImageData(0, 0, w, h);
+
+  const brightness = parseInt($("brightness").value, 10);
+  const contrast = parseInt($("contrast").value, 10);
+  const invert = $("invert").checked;
+  const gray = toGrayscale(imageData, brightness, contrast, invert);
+
+  const mode = $("ditherMode").value;
+  let bin;
+  if (mode === "fs") bin = ditherFloydSteinberg(gray, w, h);
+  else if (mode === "ordered") bin = ditherOrdered(gray, w, h);
+  else bin = ditherThreshold(gray, w, h);
+
+  drawBitmapToPreview(bin, w, h);
+  packedBits = packBits(bin, w, h);
+  packedW = w;
+  packedH = h;
+
+  const mm = (h / 8).toFixed(0);
+  const seconds = Math.ceil((packedBits.length) / 960);
+  $("brightnessVal").textContent = brightness;
+  $("contrastVal").textContent = contrast;
+  let meta = `印刷サイズ: ${w}×${h}dot (約${mm}mm) / 推定時間: 約${seconds}秒`;
+  if (truncated) meta += " ※最大長を超えたため下部を切り詰めました";
+  $("imageMeta").textContent = meta;
+}
+
+function uploadBytes(bytes) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append("file", new Blob([bytes], { type: "application/octet-stream" }), "image.bin");
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/print/image");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const p = $("imageProgress");
+        p.classList.add("show");
+        p.value = (e.loaded / e.total) * 100;
+      }
+    };
+    xhr.onload = () => (xhr.status === 200 ? resolve() : reject(new Error(xhr.responseText || "HTTP " + xhr.status)));
+    xhr.onerror = () => reject(new Error("通信エラー"));
+    xhr.send(fd);
+  });
+}
+
+$("printImageBtn").addEventListener("click", async () => {
+  if (!packedBits) return;
+  const btn = $("printImageBtn");
+  const msg = $("imageMsg");
+  btn.disabled = true;
+  showMsg(msg, "送信中…", "info");
+  try {
+    const beginRes = await fetch("/api/print/image/begin", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `w=${packedW}&h=${packedH}`,
+    });
+    if (!beginRes.ok) throw new Error(await beginRes.text());
+    await uploadBytes(packedBits);
+    showMsg(msg, "印刷しました", "ok");
+  } catch (e) {
+    showMsg(msg, "印刷に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+    $("imageProgress").classList.remove("show");
+    $("imageProgress").value = 0;
+  }
+});
+
+// ---------- text / test print ----------
+
+$("printTextBtn").addEventListener("click", async () => {
+  const text = $("textInput").value;
+  const msg = $("textMsg");
+  if (!text.trim()) {
+    showMsg(msg, "テキストを入力してください", "err");
+    return;
+  }
+  const btn = $("printTextBtn");
+  btn.disabled = true;
+  showMsg(msg, "送信中…", "info");
+  try {
+    const r = await fetch("/api/print/text", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "text=" + encodeURIComponent(text),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    showMsg(msg, "印刷しました", "ok");
+  } catch (e) {
+    showMsg(msg, "印刷に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("printQrBtn").addEventListener("click", async () => {
+  const url = $("qrInput").value.trim();
+  const msg = $("qrMsg");
+  if (!url) {
+    showMsg(msg, "URLを入力してください", "err");
+    return;
+  }
+  const btn = $("printQrBtn");
+  btn.disabled = true;
+  showMsg(msg, "送信中…", "info");
+  try {
+    const r = await fetch("/api/print/qr", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "url=" + encodeURIComponent(url),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    showMsg(msg, "印刷しました", "ok");
+  } catch (e) {
+    showMsg(msg, "印刷に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+refreshStatus();
+setInterval(refreshStatus, 4000);
+</script>
+</body>
+</html>
