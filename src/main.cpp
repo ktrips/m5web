@@ -1,5 +1,6 @@
 #include <Arduino.h>
 
+#include "camera_link.h"
 #include "printer.h"
 #include "web_server.h"
 #include "wifi_manager.h"
@@ -23,8 +24,10 @@ void checkResetButton() {
 }
 
 void setup() {
+    Serial.begin(115200);  // USB/UART0 diagnostic log, see `pio device monitor`
     pinMode(kButtonPin, INPUT);
     Printer::begin();
+    CameraLink::begin();
     WifiManager::begin();
     WebServer_::begin();
 }
@@ -32,5 +35,6 @@ void setup() {
 void loop() {
     WifiManager::loop();
     WebServer_::loop();
+    CameraLink::poll();
     checkResetButton();
 }

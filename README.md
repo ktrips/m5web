@@ -3,7 +3,8 @@
 M5Stack **ATOM Printer Kit**（ATOM Lite + 58mm サーマルプリンター）用のファームウェア。
 Wi-Fiに接続し、`m5web` というWebページをホストする。iPhoneなどからそのページを開いて
 写真をアップロードすると、プリンター用の白黒ビットマップに変換してサーマルプリンターから
-印刷する。テキストをそのまま印刷する機能もある。
+印刷する。テキスト・QRコードをそのまま印刷する機能もある。M5StickVカメラをUARTで直結して
+撮った写真をそのまま印刷することもできる（[M5StickVカメラ連携](#m5stickvカメラ連携)）。
 
 ## ハードウェア
 
@@ -80,6 +81,50 @@ Wi-Fi設定をやり直したい場合は、ATOM本体のボタンを5秒以上�
 - **QRコードを印刷**: URLなどの文字列をQRコードにして印刷する。QR自体の生成はブラウザ側ではなく
   プリンター内蔵の2Dシンボル生成機能（GS ( k コマンド）で行う。
 
+## M5StickVカメラ連携
+
+M5StickV（Kendryte K210 AIカメラ）で撮った写真を、WiFiを介さず**直結シリアルで**そのまま印刷できる。
+M5StickVにはWiFiが無いため、iPhoneからの利用とは別経路として用意している。
+
+### 配線
+
+Grove 4ピン（GND + 信号線2本のみ結線。VCC同士は繋がない — 両ボードとも別々に電源供給されるため）。
+
+| M5StickV | ATOM Lite | 備考 |
+|---|---|---|
+| G34 (UART1 TX) | G32 (RX) | 画像データはこちらの一方向のみ |
+| G35 (UART1 RX) | G26 (TX) | 現状未使用（将来のACK/ステータス返信用に配線だけしておく） |
+| GND | GND | |
+
+### 導入手順
+
+1. [`maixpy/m5web_capture.py`](maixpy/m5web_capture.py) をMaixPy IDE経由でM5StickVに書き込む
+   （`main.py`として保存するか、IDEから直接実行）。
+2. ATOM Lite側は`CameraLink`モジュールが常時UART1(G26/G32, 115200bps)を待ち受けるので、
+   ファームウェア側の追加設定は不要（通常のPlatformIO/Arduino書き込みのみでOK）。
+3. M5StickVのボタン(A)を押すと撮影→384dot幅にリサイズ→ATOM Lite側へ送信→サーマルプリンターから
+   即印刷される。ディザリング（誤差拡散）はATOM Lite側（`src/dither.cpp`）で行うため、M5StickV側は
+   グレースケール画像を送るだけでよい。
+
+### 通信プロトコル
+
+```
+"M5PV" (4 byte) | width u16 LE | height u16 LE | width*height byte グレースケール(行優先) | checksum 1 byte
+```
+`width`は384固定（`Printer::kPrintWidthDots`と一致必須）。チェックサムは全ピクセルバイトのmod 256の和で、
+検証結果はシリアルログに警告を出すのみ（診断用）。ラスターは受信しながらそのままプリンターへストリーミング
+するため、途中でチェックサム不一致と分かっても印刷を中断することはできない。
+
+### 既知の注意点
+
+このカメラ連携機能は実機での動作確認ができていない（MaixPyの公開ドキュメント・実例を根拠に実装）。
+特に以下は要確認:
+
+- MaixPyの`img.to_bytes()`がグレースケール画像で行優先(row-major)のバイト列を返す前提で実装している。
+  もし印刷結果が斜めにズレる等おかしければ、スクリプト内にコメントアウトしてある`get_pixel(x,y)`版の
+  ループに切り替えること（遅いが確実）。
+- `board_info.BUTTON_A`はM5StickVのボタンAを指す想定（Sipeed公式のMaixPyサンプルに準拠）。
+
 ## 制限事項
 
 - 印刷幅は58mmヘッド固定の384dot。
@@ -96,12 +141,16 @@ platformio.ini
 src/
   main.cpp           setup/loop の配線
   wifi_manager.*      Wi-Fi(STA)接続 / APフォールバック+キャプティブポータル / mDNS
-  printer.*           UART経由でのESC/POS風ラスター送信・テキスト送信（GS v 0）
-  web_server.*        m5webのHTTP API (状態取得, Wi-Fi設定, 画像/テキスト印刷)
+  printer.*           UART経由でのESC/POS風ラスター送信・テキスト/QR送信（GS v 0, GS ( k）
+  web_server.*        m5webのHTTP API (状態取得, Wi-Fi設定, 画像/テキスト/QR印刷)
+  dither.*            誤差拡散(Floyd–Steinberg)の行ストリーミング実装（camera_linkが使用）
+  camera_link.*        M5StickVからのUART直結カメラ画像受信 → 即印刷
 data/
   index.html          m5web本体（UI + Canvas画像変換, 外部CDN依存なし・単一ファイル）
 arduino/m5web/
   m5web.ino + 同名の*.h/*.cpp/data/  Arduino IDE用の手動同期コピー（上記と同内容）
+maixpy/
+  m5web_capture.py    M5StickV側スクリプト（撮影→リサイズ→UART送信）
 ```
 
 ## API
