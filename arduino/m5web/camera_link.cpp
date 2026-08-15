@@ -1,6 +1,6 @@
 #include "camera_link.h"
 
-#include <Arduino.h>
+#include <Preferences.h>
 
 #include "dither.h"
 #include "printer.h"
@@ -12,64 +12,86 @@ namespace {
 constexpr uint8_t kRxPin = 32;
 constexpr uint8_t kTxPin = 26;
 constexpr uint32_t kBaud = 115200;
-constexpr uint16_t kMaxHeightDots = 2000;  // mirrors web_server's cap
+
+// Capped well below the phone-upload path's limit: a full frame is kept in
+// RAM (dithered, 1bpp) so it can be viewed on the web page in either mode.
+// 48 bytes/row * 800 rows = 38400 bytes.
+constexpr uint16_t kMaxHeightDots = 800;
 
 const uint8_t kMagic[4] = {'M', '5', 'P', 'V'};
 
-enum class State { kWaitMagic, kReadWidth, kReadHeight, kReadRow, kReadChecksum };
+enum class RecvState { kWaitMagic, kReadWidth, kReadHeight, kReadRow, kReadChecksum };
 
-State state = State::kWaitMagic;
+RecvState recvState = RecvState::kWaitMagic;
 uint8_t magicMatched = 0;
 uint8_t fieldByteIndex = 0;  // byte 0/1 within the width or height field
 
-uint16_t frameWidth = 0;
-uint16_t frameHeight = 0;
+uint16_t incomingWidth = 0;
+uint16_t incomingHeight = 0;
 uint16_t rowsReceived = 0;
 uint16_t rowByteIndex = 0;
 
 uint8_t rowBuf[Printer::kPrintWidthDots];
-uint8_t packedBuf[Printer::kPrintWidthBytes];
 uint32_t checksumAccum = 0;
-
-bool frameActive = false;
 Dither::RowDitherer ditherer;
 
-void resetToIdle() {
-    state = State::kWaitMagic;
+Preferences prefs;
+Mode currentMode = Mode::kAuto;
+
+uint8_t frameBuffer[(size_t)Printer::kPrintWidthBytes * kMaxHeightDots];
+uint16_t frameHeight = 0;
+bool frameReady = false;
+bool pendingPrint = false;
+uint32_t frameSeq = 0;
+
+void printStoredFrame() {
+    Printer::reset();
+    Printer::beginRaster(Printer::kPrintWidthDots, frameHeight);
+    Printer::feedRasterChunk(frameBuffer, (size_t)Printer::kPrintWidthBytes * frameHeight);
+    Printer::endRaster();
+}
+
+void resetReceiver() {
+    recvState = RecvState::kWaitMagic;
     magicMatched = 0;
     fieldByteIndex = 0;
     rowsReceived = 0;
     rowByteIndex = 0;
-    frameActive = false;
 }
 
-void startFrame() {
+void startIncomingFrame() {
     ditherer.reset();
-    Printer::reset();
-    Printer::beginRaster(frameWidth, frameHeight);
-    frameActive = true;
     rowsReceived = 0;
     rowByteIndex = 0;
     checksumAccum = 0;
 }
 
-void finishFrame(uint8_t receivedChecksum) {
-    if (frameActive) {
-        Printer::endRaster();
-        if ((uint8_t)(checksumAccum & 0xFF) != receivedChecksum) {
-            Serial.println("[camera_link] checksum mismatch — frame may be corrupted");
-        }
+void finishIncomingFrame(uint8_t receivedChecksum) {
+    bool checksumOk = (uint8_t)(checksumAccum & 0xFF) == receivedChecksum;
+    if (!checksumOk) {
+        Serial.println("[camera_link] checksum mismatch — holding frame for review instead of auto-printing");
     }
-    resetToIdle();
+    frameHeight = incomingHeight;
+    frameReady = true;
+    frameSeq++;
+    if (currentMode == Mode::kAuto && checksumOk) {
+        pendingPrint = false;
+        printStoredFrame();
+    } else {
+        // Preview mode, or a corrupted frame in auto mode: never print
+        // without either an explicit checksum pass or a human confirming.
+        pendingPrint = true;
+    }
+    resetReceiver();
 }
 
 void handleByte(uint8_t b) {
-    switch (state) {
-        case State::kWaitMagic:
+    switch (recvState) {
+        case RecvState::kWaitMagic:
             if (b == kMagic[magicMatched]) {
                 magicMatched++;
                 if (magicMatched == 4) {
-                    state = State::kReadWidth;
+                    recvState = RecvState::kReadWidth;
                     fieldByteIndex = 0;
                 }
             } else {
@@ -77,51 +99,51 @@ void handleByte(uint8_t b) {
             }
             break;
 
-        case State::kReadWidth:
+        case RecvState::kReadWidth:
             if (fieldByteIndex == 0) {
-                frameWidth = b;
+                incomingWidth = b;
                 fieldByteIndex = 1;
             } else {
-                frameWidth |= ((uint16_t)b << 8);
+                incomingWidth |= ((uint16_t)b << 8);
                 fieldByteIndex = 0;
-                state = State::kReadHeight;
+                recvState = RecvState::kReadHeight;
             }
             break;
 
-        case State::kReadHeight:
+        case RecvState::kReadHeight:
             if (fieldByteIndex == 0) {
-                frameHeight = b;
+                incomingHeight = b;
                 fieldByteIndex = 1;
             } else {
-                frameHeight |= ((uint16_t)b << 8);
+                incomingHeight |= ((uint16_t)b << 8);
                 fieldByteIndex = 0;
-                if (frameWidth != Printer::kPrintWidthDots || frameHeight == 0 ||
-                    frameHeight > kMaxHeightDots) {
+                if (incomingWidth != Printer::kPrintWidthDots || incomingHeight == 0 ||
+                    incomingHeight > kMaxHeightDots) {
                     Serial.println("[camera_link] bad frame header, dropping");
-                    resetToIdle();
+                    resetReceiver();
                 } else {
-                    startFrame();
-                    state = State::kReadRow;
+                    startIncomingFrame();
+                    recvState = RecvState::kReadRow;
                 }
             }
             break;
 
-        case State::kReadRow:
+        case RecvState::kReadRow:
             rowBuf[rowByteIndex++] = b;
             checksumAccum += b;
-            if (rowByteIndex == frameWidth) {
-                ditherer.processRow(rowBuf, packedBuf);
-                Printer::feedRasterChunk(packedBuf, Printer::kPrintWidthBytes);
+            if (rowByteIndex == incomingWidth) {
+                uint8_t *dst = frameBuffer + (size_t)rowsReceived * Printer::kPrintWidthBytes;
+                ditherer.processRow(rowBuf, dst);
                 rowByteIndex = 0;
                 rowsReceived++;
-                if (rowsReceived == frameHeight) {
-                    state = State::kReadChecksum;
+                if (rowsReceived == incomingHeight) {
+                    recvState = RecvState::kReadChecksum;
                 }
             }
             break;
 
-        case State::kReadChecksum:
-            finishFrame(b);
+        case RecvState::kReadChecksum:
+            finishIncomingFrame(b);
             break;
     }
 }
@@ -130,12 +152,40 @@ void handleByte(uint8_t b) {
 
 void begin() {
     Serial1.begin(kBaud, SERIAL_8N1, kRxPin, kTxPin);
+    prefs.begin("m5web_cam", false);
+    currentMode = (prefs.getString("mode", "auto") == "preview") ? Mode::kPreview : Mode::kAuto;
 }
 
 void poll() {
     while (Serial1.available()) {
         handleByte((uint8_t)Serial1.read());
     }
+}
+
+Mode mode() { return currentMode; }
+
+void setMode(Mode m) {
+    currentMode = m;
+    prefs.putString("mode", m == Mode::kPreview ? "preview" : "auto");
+}
+
+Status status() {
+    return Status{currentMode, frameReady, pendingPrint, Printer::kPrintWidthDots, frameHeight, frameSeq};
+}
+
+bool confirmPrint() {
+    if (!pendingPrint) return false;
+    printStoredFrame();
+    pendingPrint = false;
+    return true;
+}
+
+void discardPending() { pendingPrint = false; }
+
+const uint8_t *frameData() { return frameReady ? frameBuffer : nullptr; }
+
+size_t frameDataLen() {
+    return frameReady ? (size_t)Printer::kPrintWidthBytes * frameHeight : 0;
 }
 
 }  // namespace CameraLink

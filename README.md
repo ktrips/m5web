@@ -80,6 +80,8 @@ Wi-Fi設定をやり直したい場合は、ATOM本体のボタンを5秒以上�
 - **Put TEXT for print**: テキストエリアに入力した文章をそのまま印刷する（動作確認・簡易メモ用）。
 - **QRコードを印刷**: URLなどの文字列をQRコードにして印刷する。QR自体の生成はブラウザ側ではなく
   プリンター内蔵の2Dシンボル生成機能（GS ( k コマンド）で行う。
+- **M5StickVカメラ**: UART直結したM5StickVで撮った写真を確認・印刷する（詳細は
+  [M5StickVカメラ連携](#m5stickvカメラ連携)）。
 
 ## M5StickVカメラ連携
 
@@ -102,18 +104,32 @@ Grove 4ピン（GND + 信号線2本のみ結線。VCC同士は繋がない — �
    （`main.py`として保存するか、IDEから直接実行）。
 2. ATOM Lite側は`CameraLink`モジュールが常時UART1(G26/G32, 115200bps)を待ち受けるので、
    ファームウェア側の追加設定は不要（通常のPlatformIO/Arduino書き込みのみでOK）。
-3. M5StickVのボタン(A)を押すと撮影→384dot幅にリサイズ→ATOM Lite側へ送信→サーマルプリンターから
-   即印刷される。ディザリング（誤差拡散）はATOM Lite側（`src/dither.cpp`）で行うため、M5StickV側は
-   グレースケール画像を送るだけでよい。
+3. M5StickVのボタン(A)を押すと撮影→384dot幅にリサイズ→ATOM Lite側へ送信。届いた画像は
+   ATOM Lite側でディザリング（誤差拡散、`src/dither.cpp`）されてRAMに保持され、m5webページの
+   「M5StickVカメラ」カードで確認できる（M5StickV側はグレースケール画像を送るだけでよい）。
+
+### Web上での確認・印刷モード
+
+m5webページの「M5StickVカメラ」カードで、受信した写真の扱いを2種類から選べる（設定はATOM Lite
+本体のNVSに保存され再起動後も保持される）。
+
+- **事後閲覧方式（デフォルト）**: 受信次第すぐ印刷し、直近の1枚をWebページ上で確認できる
+  （印刷前の確認・キャンセルはできない）。
+- **プレビュー確認方式**: 受信してもすぐには印刷せず、Webページに表示して「印刷」または「破棄」を
+  選ぶまで待機する。
+
+いずれのモードでも、フレーム全体（ディザリング後の1bppビットマップ）をATOM Lite側のRAMに
+保持するため、カメラ経由の1枚あたりの最大高さは800dot（約100mm）に制限している
+（`src/camera_link.cpp`の`kMaxHeightDots`、写真アップロードAPIの2000dotとは別の上限）。
 
 ### 通信プロトコル
 
 ```
 "M5PV" (4 byte) | width u16 LE | height u16 LE | width*height byte グレースケール(行優先) | checksum 1 byte
 ```
-`width`は384固定（`Printer::kPrintWidthDots`と一致必須）。チェックサムは全ピクセルバイトのmod 256の和で、
-検証結果はシリアルログに警告を出すのみ（診断用）。ラスターは受信しながらそのままプリンターへストリーミング
-するため、途中でチェックサム不一致と分かっても印刷を中断することはできない。
+`width`は384固定（`Printer::kPrintWidthDots`と一致必須）。チェックサムは全ピクセルバイトのmod 256の和。
+フレーム全体を受信・ディザリングし終えてから印刷するかどうかを判断する設計のため、チェックサムが
+不一致だった場合は事後閲覧方式であっても自動印刷せず、確認待ち状態にして印刷を止める。
 
 ### 既知の注意点
 
@@ -144,7 +160,7 @@ src/
   printer.*           UART経由でのESC/POS風ラスター送信・テキスト/QR送信（GS v 0, GS ( k）
   web_server.*        m5webのHTTP API (状態取得, Wi-Fi設定, 画像/テキスト/QR印刷)
   dither.*            誤差拡散(Floyd–Steinberg)の行ストリーミング実装（camera_linkが使用）
-  camera_link.*        M5StickVからのUART直結カメラ画像受信 → 即印刷
+  camera_link.*        M5StickVからのUART直結カメラ画像受信 → バッファ保持 → 事後閲覧/プレビュー確認
 data/
   index.html          m5web本体（UI + Canvas画像変換, 外部CDN依存なし・単一ファイル）
 arduino/m5web/
@@ -169,6 +185,11 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/print/test` | 配線確認用の固定テストページを印刷（UI上のボタンは無いが引き続き利用可） |
 | POST | `/api/print/image/begin` | `w`,`h` (form) で次の画像サイズを予約 (wは384固定, h<=`maxHeightDots`) |
 | POST | `/api/print/image` | multipart/form-dataで1bpp生ビットマップ本体をアップロード→即印刷 |
+| GET | `/api/camera/status` | M5StickVカメラの状態JSON (`mode`,`frameReady`,`pendingPrint`,`width`,`height`,`frameSeq`) |
+| POST | `/api/camera/mode` | `mode`=`auto`または`preview` (form) で確認モードを切り替え（再起動後も保持） |
+| GET | `/api/camera/frame` | 直近フレームの1bpp生ビットマップ（`X-Frame-Width`/`X-Frame-Height`ヘッダ付き） |
+| POST | `/api/camera/print` | プレビュー確認方式で確認待ちのフレームを印刷 |
+| POST | `/api/camera/discard` | プレビュー確認方式で確認待ちのフレームを破棄 |
 
 ### curl例
 

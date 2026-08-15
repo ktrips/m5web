@@ -154,6 +154,28 @@
   </div>
 
   <div class="card">
+    <h2>M5StickVカメラ</h2>
+    <p class="meta">M5StickVをシリアル直結すると、撮った写真をここに表示できます。</p>
+    <div class="radio-line">
+      <input type="radio" name="camMode" id="camModeAuto" value="auto">
+      <label for="camModeAuto" style="margin:0;color:var(--text)">事後閲覧方式（自動印刷→あとで確認）</label>
+    </div>
+    <div class="radio-line">
+      <input type="radio" name="camMode" id="camModePreview" value="preview">
+      <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷）</label>
+    </div>
+    <div class="preview-wrap hidden" id="camPreviewWrap">
+      <canvas id="camPreviewCanvas"></canvas>
+    </div>
+    <p class="meta" id="camMeta">まだ写真がありません</p>
+    <div class="btn-row hidden" id="camActions">
+      <button class="primary" id="camPrintBtn">印刷</button>
+      <button class="secondary" id="camDiscardBtn">破棄</button>
+    </div>
+    <div class="msg" id="camMsg"></div>
+  </div>
+
+  <div class="card">
     <h2>Put TEXT for print</h2>
     <textarea id="textInput" placeholder="Put TEXT in English only for printing out"></textarea>
     <button class="primary full" id="printTextBtn" style="margin-top:10px">Print TEXT</button>
@@ -548,6 +570,108 @@ $("printQrBtn").addEventListener("click", async () => {
     btn.disabled = false;
   }
 });
+
+// ---------- M5StickV camera ----------
+
+let camLastSeq = -1;
+
+function unpackAndDraw(canvas, buf, w, h) {
+  const bytesPerRow = w / 8;
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const byte = buf[y * bytesPerRow + (x >> 3)];
+      const black = (byte >> (7 - (x & 7))) & 1;
+      const v = black ? 0 : 255;
+      const i = (y * w + x) * 4;
+      img.data[i] = v;
+      img.data[i + 1] = v;
+      img.data[i + 2] = v;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  canvas.style.width = Math.min(360, w * 2) + "px";
+}
+
+async function loadCameraFrame(w, h) {
+  const r = await fetch("/api/camera/frame");
+  if (!r.ok) return;
+  const buf = new Uint8Array(await r.arrayBuffer());
+  unpackAndDraw($("camPreviewCanvas"), buf, w, h);
+  $("camPreviewWrap").classList.remove("hidden");
+}
+
+async function refreshCameraStatus() {
+  try {
+    const r = await fetch("/api/camera/status");
+    const s = await r.json();
+
+    const modeEl = document.getElementById(s.mode === "preview" ? "camModePreview" : "camModeAuto");
+    modeEl.checked = true;
+
+    if (!s.frameReady) {
+      $("camActions").classList.add("hidden");
+      $("camMeta").textContent = "まだ写真がありません";
+      return;
+    }
+
+    $("camActions").classList.toggle("hidden", !s.pendingPrint);
+    $("camMeta").textContent = s.pendingPrint
+      ? `確認待ち: ${s.width}×${s.height}dot`
+      : `最後に印刷: ${s.width}×${s.height}dot`;
+
+    if (s.frameSeq !== camLastSeq) {
+      camLastSeq = s.frameSeq;
+      await loadCameraFrame(s.width, s.height);
+    }
+  } catch (e) {
+    // transient network error while polling; try again next interval
+  }
+}
+
+document.querySelectorAll('input[name="camMode"]').forEach((el) => {
+  el.addEventListener("change", async (e) => {
+    try {
+      await fetch("/api/camera/mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "mode=" + e.target.value,
+      });
+    } catch (err) {
+      /* ignore; next status poll will resync the radio buttons */
+    }
+  });
+});
+
+$("camPrintBtn").addEventListener("click", async () => {
+  const msg = $("camMsg");
+  $("camPrintBtn").disabled = true;
+  try {
+    const r = await fetch("/api/camera/print", { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    showMsg(msg, "印刷しました", "ok");
+  } catch (e) {
+    showMsg(msg, "失敗しました: " + e.message, "err");
+  } finally {
+    $("camPrintBtn").disabled = false;
+  }
+});
+
+$("camDiscardBtn").addEventListener("click", async () => {
+  try {
+    await fetch("/api/camera/discard", { method: "POST" });
+    showMsg($("camMsg"), "破棄しました", "info");
+  } catch (e) {
+    showMsg($("camMsg"), "失敗しました: " + e.message, "err");
+  }
+});
+
+refreshCameraStatus();
+setInterval(refreshCameraStatus, 3000);
 
 refreshStatus();
 setInterval(refreshStatus, 4000);

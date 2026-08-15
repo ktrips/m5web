@@ -3,6 +3,7 @@
 #include <LittleFS.h>
 #include <WebServer.h>
 
+#include "camera_link.h"
 #include "printer.h"
 #include "wifi_manager.h"
 
@@ -147,6 +148,66 @@ void handleImageUploadChunk() {
     }
 }
 
+void handleCameraStatus() {
+    CameraLink::Status s = CameraLink::status();
+    String json = "{";
+    json += "\"mode\":\"" + String(s.mode == CameraLink::Mode::kPreview ? "preview" : "auto") + "\",";
+    json += "\"frameReady\":" + String(s.frameReady ? "true" : "false") + ",";
+    json += "\"pendingPrint\":" + String(s.pendingPrint ? "true" : "false") + ",";
+    json += "\"width\":" + String(s.width) + ",";
+    json += "\"height\":" + String(s.height) + ",";
+    json += "\"frameSeq\":" + String(s.frameSeq);
+    json += "}";
+    server.send(200, "application/json", json);
+}
+
+void handleCameraModeSet() {
+    if (!server.hasArg("mode")) {
+        sendPlain(400, "mode required");
+        return;
+    }
+    String m = server.arg("mode");
+    if (m != "auto" && m != "preview") {
+        sendPlain(400, "mode must be 'auto' or 'preview'");
+        return;
+    }
+    CameraLink::setMode(m == "preview" ? CameraLink::Mode::kPreview : CameraLink::Mode::kAuto);
+    sendPlain(200, "OK");
+}
+
+void handleCameraPrint() {
+    if (!CameraLink::confirmPrint()) {
+        sendPlain(400, "no pending frame");
+        return;
+    }
+    sendPlain(200, "OK");
+}
+
+void handleCameraDiscard() {
+    CameraLink::discardPending();
+    sendPlain(200, "OK");
+}
+
+void handleCameraFrame() {
+    const uint8_t *data = CameraLink::frameData();
+    size_t len = CameraLink::frameDataLen();
+    if (!data || len == 0) {
+        sendPlain(404, "no frame yet");
+        return;
+    }
+    CameraLink::Status s = CameraLink::status();
+    server.sendHeader("X-Frame-Width", String(s.width));
+    server.sendHeader("X-Frame-Height", String(s.height));
+    server.setContentLength(len);
+    server.send(200, "application/octet-stream", "");  // headers + empty body
+    // Body written directly via the underlying client rather than
+    // server.sendContent(), since `data` is raw binary (embedded 0x00
+    // bytes) and Arduino's String isn't safe to route it through —
+    // WiFiClient::write(const uint8_t*, size_t) is the same Print-class
+    // primitive already used for HardwareSerial writes in printer.cpp.
+    server.client().write(data, len);
+}
+
 }  // namespace
 
 void begin() {
@@ -163,6 +224,11 @@ void begin() {
     server.on("/api/print/test", HTTP_POST, handlePrintTest);
     server.on("/api/print/image/begin", HTTP_POST, handleImageBegin);
     server.on("/api/print/image", HTTP_POST, handleImageUploadComplete, handleImageUploadChunk);
+    server.on("/api/camera/status", HTTP_GET, handleCameraStatus);
+    server.on("/api/camera/mode", HTTP_POST, handleCameraModeSet);
+    server.on("/api/camera/print", HTTP_POST, handleCameraPrint);
+    server.on("/api/camera/discard", HTTP_POST, handleCameraDiscard);
+    server.on("/api/camera/frame", HTTP_GET, handleCameraFrame);
 
     server.begin();
 }
