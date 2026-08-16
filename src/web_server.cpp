@@ -193,11 +193,11 @@ void handleCameraModeSet() {
 }
 
 void handleCameraPrint() {
-    if (!CameraLink::confirmPrint()) {
-        sendPlain(400, "no pending frame");
+    if (!CameraLink::printLastFrame()) {
+        sendPlain(400, "no camera frame yet");
         return;
     }
-    Serial.println("[web] camera frame printed (confirmed)");
+    Serial.println("[web] camera frame printed");
     sendPlain(200, "OK");
 }
 

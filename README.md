@@ -124,6 +124,11 @@ m5webページの「M5StickVカメラ」カードで、受信した写真の扱�
 - **プレビュー確認方式**: 受信してもすぐには印刷せず、Webページに表示して「印刷」または「破棄」を
   選ぶまで待機する。
 
+どちらのモードでも、直近の1枚は常にATOM Lite側のRAMに残っているので、Webページの「印刷」
+（確認待ちでなければ「もう一度印刷」ボタンになる）で**何度でも再印刷**できる。加えて、
+**ATOM Lite本体のボタンを短く押す**と、そのときの直近フレームをWeb UIを開かずに再印刷できる
+（5秒以上長押しするとWi-Fi設定リセットになるので、短押しであること）。
+
 いずれのモードでも、フレーム全体（ディザリング後の1bppビットマップ）をATOM Lite側のRAMに
 保持するため、カメラ経由の1枚あたりの最大高さは800dot（約100mm）に制限している
 （`src/camera_link.cpp`の`kMaxHeightDots`、写真アップロードAPIの2000dotとは別の上限）。
@@ -205,7 +210,7 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/camera/mode` | `mode`=`auto`または`preview` (form) で確認モードを切り替え（再起動後も保持） |
 | POST | `/api/camera/settings` | `brightness`,`contrast` (form, -100〜100) で次フレームからの既定調整値を設定（再起動後も保持） |
 | GET | `/api/camera/frame` | 直近フレームの1bpp生ビットマップ（`X-Frame-Width`/`X-Frame-Height`ヘッダ付き） |
-| POST | `/api/camera/print` | プレビュー確認方式で確認待ちのフレームを印刷 |
+| POST | `/api/camera/print` | 直近フレームを印刷（確認待ちならそれを確定、そうでなければ再印刷） |
 | POST | `/api/camera/discard` | プレビュー確認方式で確認待ちのフレームを破棄 |
 
 ### curl例

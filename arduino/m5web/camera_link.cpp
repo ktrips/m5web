@@ -211,10 +211,10 @@ Status status() {
                   frameHeight,        frameSeq,           currentBrightness, currentContrast};
 }
 
-bool confirmPrint() {
-    if (!pendingPrint) return false;
+bool printLastFrame() {
+    if (!frameReady) return false;
     printStoredFrame();
-    pendingPrint = false;
+    pendingPrint = false;  // resolves the pending-review state, if any
     return true;
 }
 

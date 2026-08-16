@@ -52,9 +52,14 @@ void setAdjust(int brightness, int contrast);
 
 Status status();
 
-// Preview mode only: print / drop the currently pending frame. confirmPrint()
-// returns false if nothing is pending.
-bool confirmPrint();
+// Prints the last stored frame — the currently-pending one in preview
+// mode (also clearing pendingPrint), or a plain reprint of whatever was
+// last received/printed otherwise. Returns false if no frame has arrived
+// yet (frameReady is false). Callable any time, from the web UI or the
+// ATOM Lite's physical button (see main.cpp).
+bool printLastFrame();
+
+// Preview mode only: drop the currently pending frame without printing it.
 void discardPending();
 
 // Raw packed 1bpp bitmap (MSB-first, 1=black) of the last stored frame, for

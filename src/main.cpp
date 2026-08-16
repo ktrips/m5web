@@ -5,21 +5,32 @@
 #include "web_server.h"
 #include "wifi_manager.h"
 
-// ATOM Lite's builtin button (G39, active LOW). Hold 5s to forget saved
-// WiFi credentials and drop back into AP setup mode.
+// ATOM Lite's builtin button (G39, active LOW).
+//   short press (released before kResetHoldMs) -> reprint the last M5StickV
+//     camera frame, if any
+//   held past kResetHoldMs                     -> forget saved WiFi
+//     credentials and drop back into AP setup mode
 constexpr uint8_t kButtonPin = 39;
 constexpr unsigned long kResetHoldMs = 5000;
+constexpr unsigned long kMinPressMs = 50;  // debounce floor for a "real" short press
 unsigned long buttonDownSinceMs = 0;
 
-void checkResetButton() {
+void checkButton() {
     bool pressed = digitalRead(kButtonPin) == LOW;
     if (pressed) {
         if (buttonDownSinceMs == 0) buttonDownSinceMs = millis();
         if (millis() - buttonDownSinceMs > kResetHoldMs) {
-            WifiManager::forgetAndRestart();
+            WifiManager::forgetAndRestart();  // restarts the board; does not return
         }
-    } else {
+    } else if (buttonDownSinceMs != 0) {
+        unsigned long heldMs = millis() - buttonDownSinceMs;
         buttonDownSinceMs = 0;
+        if (heldMs >= kMinPressMs && heldMs < kResetHoldMs) {
+            Serial.println("[button] short press: reprinting last camera frame");
+            if (!CameraLink::printLastFrame()) {
+                Serial.println("[button] no camera frame to print yet");
+            }
+        }
     }
 }
 
@@ -69,6 +80,6 @@ void loop() {
     WifiManager::loop();
     WebServer_::loop();
     CameraLink::poll();
-    checkResetButton();
+    checkButton();
     printHeartbeat();
 }

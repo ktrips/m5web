@@ -175,7 +175,7 @@
     <p class="meta" id="camMeta">まだ写真がありません</p>
     <div class="btn-row hidden" id="camActions">
       <button class="primary" id="camPrintBtn">印刷</button>
-      <button class="secondary" id="camDiscardBtn">破棄</button>
+      <button class="secondary hidden" id="camDiscardBtn">破棄</button>
     </div>
     <div class="msg" id="camMsg"></div>
   </div>
@@ -633,10 +633,12 @@ async function refreshCameraStatus() {
       return;
     }
 
-    $("camActions").classList.toggle("hidden", !s.pendingPrint);
+    $("camActions").classList.remove("hidden");
+    $("camDiscardBtn").classList.toggle("hidden", !s.pendingPrint);
+    $("camPrintBtn").textContent = s.pendingPrint ? "印刷" : "もう一度印刷";
     $("camMeta").textContent = s.pendingPrint
       ? `確認待ち: ${s.width}×${s.height}dot`
-      : `最後に印刷: ${s.width}×${s.height}dot`;
+      : `最後に印刷: ${s.width}×${s.height}dot（もう一度印刷できます）`;
 
     if (s.frameSeq !== camLastSeq) {
       camLastSeq = s.frameSeq;
