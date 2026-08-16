@@ -4,6 +4,8 @@
 #include <WebServer.h>
 
 #include "camera_link.h"
+#include "gallery.h"
+#include "led.h"
 #include "printer.h"
 #include "wifi_manager.h"
 
@@ -19,9 +21,22 @@ WebServer server(80);
 uint16_t pendingWidth = 0;
 uint16_t pendingHeight = 0;
 bool imageInProgress = false;
+uint16_t uploadGalleryId = 0;
 
 void sendPlain(int code, const String &body) {
     server.send(code, "text/plain", body);
+}
+
+// Minimal JSON string escaping for text that ultimately originates off-board
+// (the M5StickV's detection label, over UART) — keeps a stray quote or
+// backslash from producing invalid JSON on the status/gallery endpoints.
+String jsonEscape(const char *s) {
+    String out;
+    for (const char *p = s; *p; p++) {
+        if (*p == '"' || *p == '\\') out += '\\';
+        if ((unsigned char)*p >= 0x20) out += *p;
+    }
+    return out;
 }
 
 void handleRoot() {
@@ -140,14 +155,26 @@ void handleImageUploadChunk() {
         if (imageInProgress) {
             Printer::reset();
             Printer::beginRaster(pendingWidth, pendingHeight);
+            // Streamed straight to flash alongside the printer feed so a
+            // tall (up to kMaxHeightDots) image never has to be buffered
+            // whole in RAM just to also save it to the gallery.
+            uploadGalleryId = Gallery::beginSave(pendingHeight);
         }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
         if (imageInProgress) {
             Printer::feedRasterChunk(upload.buf, upload.currentSize);
+            if (uploadGalleryId != 0 && !Gallery::feedSave(upload.buf, upload.currentSize)) {
+                Gallery::cancelSave();
+                uploadGalleryId = 0;
+            }
         }
     } else if (upload.status == UPLOAD_FILE_END) {
         if (imageInProgress) {
             Printer::endRaster();
+            if (uploadGalleryId != 0) {
+                Gallery::endSave();
+                Led::notifyNewImage();
+            }
             imageInProgress = false;
         }
     }
@@ -163,7 +190,8 @@ void handleCameraStatus() {
     json += "\"height\":" + String(s.height) + ",";
     json += "\"frameSeq\":" + String(s.frameSeq) + ",";
     json += "\"brightness\":" + String(s.brightness) + ",";
-    json += "\"contrast\":" + String(s.contrast);
+    json += "\"contrast\":" + String(s.contrast) + ",";
+    json += "\"label\":\"" + jsonEscape(s.label) + "\"";
     json += "}";
     server.send(200, "application/json", json);
 }
@@ -227,6 +255,79 @@ void handleCameraFrame() {
     server.client().write(data, len);
 }
 
+void handleGalleryList() {
+    Gallery::Entry entries[Gallery::kMaxEntries];
+    size_t count = Gallery::list(entries, Gallery::kMaxEntries);
+
+    String json = "{\"maxEntries\":" + String((unsigned)Gallery::kMaxEntries) + ",\"entries\":[";
+    for (size_t i = 0; i < count; i++) {
+        if (i > 0) json += ",";
+        json += "{\"id\":" + String(entries[i].id) + ",\"height\":" + String(entries[i].height) +
+                ",\"bytes\":" + String((unsigned)entries[i].bytes) +
+                ",\"label\":\"" + jsonEscape(entries[i].label) + "\"}";
+    }
+    json += "]}";
+    server.send(200, "application/json", json);
+}
+
+void handleGalleryFrame() {
+    if (!server.hasArg("id")) {
+        sendPlain(400, "id required");
+        return;
+    }
+    uint16_t id = (uint16_t)server.arg("id").toInt();
+    String path;
+    uint16_t height = 0;
+    if (!Gallery::frameInfo(id, path, height)) {
+        sendPlain(404, "not found");
+        return;
+    }
+    File f = LittleFS.open(path, "r");
+    if (!f) {
+        sendPlain(500, "failed to open file");
+        return;
+    }
+    server.sendHeader("X-Frame-Width", String(Printer::kPrintWidthDots));
+    server.sendHeader("X-Frame-Height", String(height));
+    server.setContentLength(f.size());
+    server.send(200, "application/octet-stream", "");
+    uint8_t chunk[512];
+    while (f.available()) {
+        int n = f.read(chunk, sizeof(chunk));
+        if (n <= 0) break;
+        server.client().write(chunk, (size_t)n);
+    }
+    f.close();
+}
+
+void handleGalleryPrint() {
+    if (!server.hasArg("id")) {
+        sendPlain(400, "id required");
+        return;
+    }
+    uint16_t id = (uint16_t)server.arg("id").toInt();
+    if (!Gallery::print(id)) {
+        sendPlain(404, "not found");
+        return;
+    }
+    Serial.printf("[web] gallery #%u printed\n", id);
+    sendPlain(200, "OK");
+}
+
+void handleGalleryDelete() {
+    if (!server.hasArg("id")) {
+        sendPlain(400, "id required");
+        return;
+    }
+    uint16_t id = (uint16_t)server.arg("id").toInt();
+    if (!Gallery::remove(id)) {
+        sendPlain(404, "not found");
+        return;
+    }
+    Serial.printf("[web] gallery #%u deleted\n", id);
+    sendPlain(200, "OK");
+}
+
 }  // namespace
 
 void begin() {
@@ -249,6 +350,10 @@ void begin() {
     server.on("/api/camera/print", HTTP_POST, handleCameraPrint);
     server.on("/api/camera/discard", HTTP_POST, handleCameraDiscard);
     server.on("/api/camera/frame", HTTP_GET, handleCameraFrame);
+    server.on("/api/gallery", HTTP_GET, handleGalleryList);
+    server.on("/api/gallery/frame", HTTP_GET, handleGalleryFrame);
+    server.on("/api/gallery/print", HTTP_POST, handleGalleryPrint);
+    server.on("/api/gallery/delete", HTTP_POST, handleGalleryDelete);
 
     server.begin();
 }

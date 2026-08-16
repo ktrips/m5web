@@ -83,6 +83,17 @@
   .radio-line { display: flex; align-items: center; gap: 6px; font-size: 14px; margin: 6px 0; }
   .hidden { display: none !important; }
   footer { text-align: center; color: var(--sub); font-size: 11px; margin-top: 8px; }
+  .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; margin-top: 4px; }
+  .gallery-item { background: #1b1c20; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+  .gallery-thumb { background: #fff; display: flex; align-items: center; justify-content: center; min-height: 48px; }
+  .gallery-thumb canvas { width: 100%; display: block; image-rendering: pixelated; }
+  .gallery-actions { display: flex; gap: 4px; padding: 4px; }
+  .gallery-actions button { flex: 1; padding: 6px 4px; font-size: 12px; font-weight: 500; }
+  .gallery-label { font-size: 11px; color: var(--accent); text-align: center; padding: 0 4px 4px; }
+  .detect-label {
+    display: inline-flex; align-self: center; margin: 8px 0 0; font-size: 12px; font-weight: 600;
+    color: var(--accent); background: rgba(61,139,253,.15); padding: 4px 10px; border-radius: 20px;
+  }
 </style>
 </head>
 <body>
@@ -172,12 +183,20 @@
     <div class="preview-wrap hidden" id="camPreviewWrap">
       <canvas id="camPreviewCanvas"></canvas>
     </div>
+    <p class="detect-label hidden" id="camLabel"></p>
     <p class="meta" id="camMeta">まだ写真がありません</p>
     <div class="btn-row hidden" id="camActions">
       <button class="primary" id="camPrintBtn">印刷</button>
       <button class="secondary hidden" id="camDiscardBtn">破棄</button>
     </div>
     <div class="msg" id="camMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>ギャラリー <span class="meta" id="galleryCount"></span></h2>
+    <p class="meta">M5StickVで撮った写真・アップロードした写真の保存履歴です（フラッシュ保存、最大20枚）。いっぱいになったら不要なものを削除してください。</p>
+    <div class="gallery-grid" id="galleryGrid"></div>
+    <p class="meta" id="galleryEmpty">まだ保存された写真はありません</p>
   </div>
 
   <div class="card">
@@ -629,6 +648,7 @@ async function refreshCameraStatus() {
 
     if (!s.frameReady) {
       $("camActions").classList.add("hidden");
+      $("camLabel").classList.add("hidden");
       $("camMeta").textContent = "まだ写真がありません";
       return;
     }
@@ -639,6 +659,10 @@ async function refreshCameraStatus() {
     $("camMeta").textContent = s.pendingPrint
       ? `確認待ち: ${s.width}×${s.height}dot`
       : `最後に印刷: ${s.width}×${s.height}dot（もう一度印刷できます）`;
+
+    const camLabel = $("camLabel");
+    camLabel.classList.toggle("hidden", !s.label);
+    camLabel.textContent = s.label ? "検出: " + s.label : "";
 
     if (s.frameSeq !== camLastSeq) {
       camLastSeq = s.frameSeq;
@@ -709,6 +733,143 @@ $("camDiscardBtn").addEventListener("click", async () => {
 
 refreshCameraStatus();
 setInterval(refreshCameraStatus, 3000);
+
+// ---------- gallery ----------
+
+// Downsamples straight from the packed 1bpp buffer to a small thumbnail
+// (nearest-neighbor) instead of decoding at full resolution — a saved frame
+// can be 384x2000, and the gallery may show up to 20 of them at once.
+function drawThumbnail(canvas, buf, w, h, thumbW) {
+  const bytesPerRow = w / 8;
+  const thumbH = Math.max(1, Math.round((thumbW * h) / w));
+  canvas.width = thumbW;
+  canvas.height = thumbH;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(thumbW, thumbH);
+  for (let ty = 0; ty < thumbH; ty++) {
+    const sy = Math.min(h - 1, Math.floor((ty * h) / thumbH));
+    for (let tx = 0; tx < thumbW; tx++) {
+      const sx = Math.min(w - 1, Math.floor((tx * w) / thumbW));
+      const byte = buf[sy * bytesPerRow + (sx >> 3)];
+      const black = (byte >> (7 - (sx & 7))) & 1;
+      const v = black ? 0 : 255;
+      const i = (ty * thumbW + tx) * 4;
+      img.data[i] = v;
+      img.data[i + 1] = v;
+      img.data[i + 2] = v;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+async function loadGalleryThumbnail(canvas, id, height) {
+  try {
+    const r = await fetch("/api/gallery/frame?id=" + id);
+    if (!r.ok) return;
+    const buf = new Uint8Array(await r.arrayBuffer());
+    drawThumbnail(canvas, buf, PRINT_WIDTH, height, 120);
+  } catch (e) {
+    // leave the thumbnail blank; entry metadata is still shown
+  }
+}
+
+function buildGalleryItem(entry) {
+  const item = document.createElement("div");
+  item.className = "gallery-item";
+  item.dataset.id = String(entry.id);
+
+  const thumbWrap = document.createElement("div");
+  thumbWrap.className = "gallery-thumb";
+  const canvas = document.createElement("canvas");
+  thumbWrap.appendChild(canvas);
+  item.appendChild(thumbWrap);
+
+  if (entry.label) {
+    const label = document.createElement("div");
+    label.className = "gallery-label";
+    label.textContent = entry.label;
+    item.appendChild(label);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "gallery-actions";
+
+  const printBtn = document.createElement("button");
+  printBtn.className = "secondary";
+  printBtn.textContent = "再印刷";
+  printBtn.addEventListener("click", async () => {
+    printBtn.disabled = true;
+    try {
+      const r = await fetch("/api/gallery/print?id=" + entry.id, { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+    } catch (e) {
+      alert("印刷に失敗しました: " + e.message);
+    } finally {
+      printBtn.disabled = false;
+    }
+  });
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "secondary";
+  delBtn.textContent = "削除";
+  delBtn.addEventListener("click", async () => {
+    if (!confirm("この写真を削除しますか？")) return;
+    delBtn.disabled = true;
+    try {
+      const r = await fetch("/api/gallery/delete?id=" + entry.id, { method: "POST" });
+      if (!r.ok) throw new Error(await r.text());
+      item.remove();
+    } catch (e) {
+      alert("削除に失敗しました: " + e.message);
+      delBtn.disabled = false;
+    }
+  });
+
+  actions.appendChild(printBtn);
+  actions.appendChild(delBtn);
+  item.appendChild(actions);
+
+  loadGalleryThumbnail(canvas, entry.id, entry.height);
+  return item;
+}
+
+function renderGallery(entries, maxEntries) {
+  const grid = $("galleryGrid");
+  $("galleryEmpty").classList.toggle("hidden", entries.length > 0);
+  $("galleryCount").textContent = entries.length ? `(${entries.length}/${maxEntries})` : "";
+
+  // Entries are immutable once saved, so only add/remove — never redraw a
+  // thumbnail that's already on screen.
+  const newIds = new Set(entries.map((e) => String(e.id)));
+  Array.from(grid.children).forEach((el) => {
+    if (!newIds.has(el.dataset.id)) el.remove();
+  });
+
+  const existingIds = new Set(Array.from(grid.children).map((el) => el.dataset.id));
+  entries.forEach((entry) => {
+    if (existingIds.has(String(entry.id))) return;
+    grid.appendChild(buildGalleryItem(entry));
+  });
+}
+
+let galleryLoading = false;
+async function refreshGallery() {
+  if (galleryLoading) return;
+  galleryLoading = true;
+  try {
+    const r = await fetch("/api/gallery");
+    const data = await r.json();
+    renderGallery(data.entries || [], data.maxEntries || 20);
+  } catch (e) {
+    // transient network error while polling; try again next interval
+  } finally {
+    galleryLoading = false;
+  }
+}
+
+refreshGallery();
+setInterval(refreshGallery, 5000);
 
 refreshStatus();
 setInterval(refreshStatus, 4000);

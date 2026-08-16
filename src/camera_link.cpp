@@ -3,6 +3,8 @@
 #include <Preferences.h>
 
 #include "dither.h"
+#include "gallery.h"
+#include "led.h"
 #include "printer.h"
 
 namespace CameraLink {
@@ -20,7 +22,7 @@ constexpr uint16_t kMaxHeightDots = 800;
 
 const uint8_t kMagic[4] = {'M', '5', 'P', 'V'};
 
-enum class RecvState { kWaitMagic, kReadWidth, kReadHeight, kReadRow, kReadChecksum };
+enum class RecvState { kWaitMagic, kReadWidth, kReadHeight, kReadLabelLen, kReadLabel, kReadRow, kReadChecksum };
 
 RecvState recvState = RecvState::kWaitMagic;
 uint8_t magicMatched = 0;
@@ -30,6 +32,11 @@ uint16_t incomingWidth = 0;
 uint16_t incomingHeight = 0;
 uint16_t rowsReceived = 0;
 uint16_t rowByteIndex = 0;
+
+char incomingLabel[kMaxLabelLen + 1];
+uint8_t incomingLabelStoreLen = 0;  // bytes actually kept (<= kMaxLabelLen)
+uint8_t incomingLabelWireLen = 0;   // bytes the sender declared, always fully consumed
+uint8_t labelBytesRead = 0;
 
 uint8_t rowBuf[Printer::kPrintWidthDots];
 uint32_t checksumAccum = 0;
@@ -42,6 +49,7 @@ int8_t currentContrast = 0;
 
 uint8_t frameBuffer[(size_t)Printer::kPrintWidthBytes * kMaxHeightDots];
 uint16_t frameHeight = 0;
+char frameLabel[kMaxLabelLen + 1] = "";
 bool frameReady = false;
 bool pendingPrint = false;
 uint32_t frameSeq = 0;
@@ -94,10 +102,14 @@ void finishIncomingFrame(uint8_t receivedChecksum) {
         Serial.println("[camera_link] checksum mismatch — holding frame for review instead of auto-printing");
     }
     frameHeight = incomingHeight;
+    memcpy(frameLabel, incomingLabel, sizeof(frameLabel));
     frameReady = true;
     frameSeq++;
-    Serial.printf("[camera_link] frame received: %ux%u (mode=%s, checksum=%s)\n", Printer::kPrintWidthDots,
-                  frameHeight, currentMode == Mode::kPreview ? "preview" : "auto", checksumOk ? "ok" : "FAIL");
+    Serial.printf("[camera_link] frame received: %ux%u label=\"%s\" (mode=%s, checksum=%s)\n",
+                  Printer::kPrintWidthDots, frameHeight, frameLabel,
+                  currentMode == Mode::kPreview ? "preview" : "auto", checksumOk ? "ok" : "FAIL");
+    Gallery::save(frameBuffer, (size_t)Printer::kPrintWidthBytes * frameHeight, frameHeight, frameLabel);
+    Led::notifyNewImage();
     if (currentMode == Mode::kAuto && checksumOk) {
         pendingPrint = false;
         printStoredFrame();
@@ -107,6 +119,7 @@ void finishIncomingFrame(uint8_t receivedChecksum) {
         // without either an explicit checksum pass or a human confirming.
         pendingPrint = true;
     }
+    Led::setCameraPending(pendingPrint);
     resetReceiver();
 }
 
@@ -147,9 +160,33 @@ void handleByte(uint8_t b) {
                     Serial.println("[camera_link] bad frame header, dropping");
                     resetReceiver();
                 } else {
+                    // Reset here (before the label) so checksumAccum starts fresh and
+                    // picks up label bytes below, in addition to the pixel bytes.
                     startIncomingFrame();
-                    recvState = RecvState::kReadRow;
+                    recvState = RecvState::kReadLabelLen;
                 }
+            }
+            break;
+
+        case RecvState::kReadLabelLen:
+            incomingLabelWireLen = b;
+            incomingLabelStoreLen = (b > kMaxLabelLen) ? kMaxLabelLen : b;
+            labelBytesRead = 0;
+            if (incomingLabelWireLen == 0) {
+                incomingLabel[0] = '\0';
+                recvState = RecvState::kReadRow;
+            } else {
+                recvState = RecvState::kReadLabel;
+            }
+            break;
+
+        case RecvState::kReadLabel:
+            if (labelBytesRead < incomingLabelStoreLen) incomingLabel[labelBytesRead] = (char)b;
+            checksumAccum += b;
+            labelBytesRead++;
+            if (labelBytesRead == incomingLabelWireLen) {
+                incomingLabel[incomingLabelStoreLen] = '\0';
+                recvState = RecvState::kReadRow;
             }
             break;
 
@@ -207,18 +244,24 @@ void setAdjust(int brightness, int contrast) {
 }
 
 Status status() {
-    return Status{currentMode,        frameReady,        pendingPrint,     Printer::kPrintWidthDots,
-                  frameHeight,        frameSeq,           currentBrightness, currentContrast};
+    Status s{currentMode,        frameReady,        pendingPrint,     Printer::kPrintWidthDots,
+             frameHeight,        frameSeq,           currentBrightness, currentContrast};
+    memcpy(s.label, frameLabel, sizeof(s.label));
+    return s;
 }
 
 bool printLastFrame() {
     if (!frameReady) return false;
     printStoredFrame();
     pendingPrint = false;  // resolves the pending-review state, if any
+    Led::setCameraPending(false);
     return true;
 }
 
-void discardPending() { pendingPrint = false; }
+void discardPending() {
+    pendingPrint = false;
+    Led::setCameraPending(false);
+}
 
 const uint8_t *frameData() { return frameReady ? frameBuffer : nullptr; }
 

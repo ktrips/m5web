@@ -1,6 +1,8 @@
 #include <Arduino.h>
 
 #include "camera_link.h"
+#include "gallery.h"
+#include "led.h"
 #include "printer.h"
 #include "web_server.h"
 #include "wifi_manager.h"
@@ -70,6 +72,8 @@ void setup() {
     Serial.println("\n=== m5web starting ===");
     pinMode(kButtonPin, INPUT);
     Printer::begin();
+    Led::begin();
+    Gallery::begin();  // reports pre-existing saved photos to Led on begin()
     CameraLink::begin();
     WifiManager::begin();
     WebServer_::begin();
@@ -80,6 +84,7 @@ void loop() {
     WifiManager::loop();
     WebServer_::loop();
     CameraLink::poll();
+    Led::poll();
     checkButton();
     printHeartbeat();
 }

@@ -16,14 +16,24 @@
 //
 // Wire protocol, sent once per frame, no acknowledgement:
 //   "M5PV" (4 bytes) | width u16 LE | height u16 LE
+//   | labelLen u8 | label (labelLen bytes, UTF-8, no NUL)
 //   | width*height grayscale bytes (row-major, 0-255)
-//   | 1 checksum byte (sum of all pixel bytes mod 256)
+//   | 1 checksum byte (sum of all label bytes + all pixel bytes, mod 256)
 // width must equal Printer::kPrintWidthDots (384); height is capped well
 // below the phone-upload path's limit because a full frame is now kept in
-// RAM (dithered, 1bpp) for on-page viewing regardless of mode.
+// RAM (dithered, 1bpp) for on-page viewing regardless of mode. `label` is a
+// short human-readable description of what the M5StickV's on-device
+// detection found in the shot (currently just "Face"/"Face x2"/... from a
+// Haar-cascade face detector, empty if nothing was detected) — shown as a
+// caption under the image on the m5web page and in the gallery.
 namespace CameraLink {
 
 enum class Mode { kAuto, kPreview };
+
+// Matches maixpy/m5web_capture.py's MAX_LABEL_LEN; longer labels are
+// truncated on receipt (the byte count on the wire is still consumed in
+// full so the stream doesn't desync).
+constexpr uint8_t kMaxLabelLen = 31;
 
 struct Status {
     Mode mode;
@@ -34,6 +44,7 @@ struct Status {
     uint32_t frameSeq;   // increments each time a new frame is stored
     int8_t brightness;   // default adjustment applied to future frames, -100..100
     int8_t contrast;     // default adjustment applied to future frames, -100..100
+    char label[kMaxLabelLen + 1];  // "" if nothing was detected
 };
 
 void begin();

@@ -82,6 +82,11 @@ Wi-Fi設定をやり直したい場合は、ATOM本体のボタンを5秒以上�
   プリンター内蔵の2Dシンボル生成機能（GS ( k コマンド）で行う。
 - **M5StickVカメラ**: UART直結したM5StickVで撮った写真を確認・印刷する（詳細は
   [M5StickVカメラ連携](#m5stickvカメラ連携)）。
+- **ギャラリー**: M5StickVカメラで撮った写真・アップロードした写真は、印刷時に自動的に
+  ATOM Lite本体のフラッシュ（LittleFS）にも保存され、ページ下部の「ギャラリー」カードに
+  一覧表示される。各写真はサムネイル表示のうえ「再印刷」「削除」ができる。最大20枚まで保存され、
+  いっぱいになると新しい保存はスキップされる（シリアルログに記録）ので、不要な写真は
+  「削除」ボタンで消すこと。
 
 ## M5StickVカメラ連携
 
@@ -114,6 +119,51 @@ Grove 4ピン（GND + 信号線2本のみ結線。VCC同士は繋がない — �
    シャッター音はベストエフォートで、`shutter.wav`が無い/読めない場合もエラーにせず撮影・送信は
    続行される。
 
+### カメラの向き
+
+M5StickVはセンサーが本体に対して物理的に回転した状態で実装されているため、そのままだと
+LED側を上にして構えた時に撮影される写真が横倒しになる（実機で確認済み・時計回りに90°回転が
+必要）。本来は`sensor.set_transpose()`でセンサー側で（ほぼノーコストで）補正したかったが、
+今回のMaixPyビルドには存在せず`AttributeError`になったため、`m5web_capture.py`の
+`send_frame()`内でソフトウェア回転している。
+
+- **メモリ制約により、リサイズ＋回転済みの画像バッファを一度に丸ごと作ることができない**。
+  実機で384×512（約196KB）程度の中間バッファを確保しようとしただけで
+  `MemoryError: memory allocation failed`が発生することを確認済み（このボードの
+  MicroPythonヒープはかなり小さい/断片化しているらしく、640×480=307KBのセンサーの
+  フレームバッファ自体は問題なく存在するのに、そこから384×512程度の派生コピーを
+  作ろうとすると足りない）。そのため`send_frame()`は384バイトの行バッファ1つだけを
+  使い回し、`img.get_pixel(x, y)`で元のフレームバッファから直接1ピクセルずつ読みながら
+  ATOM Lite側へ1行ずつストリーミング送信する（リサイズと回転の座標変換を1回のピクセル
+  参照にまとめてある）。約20万回の`get_pixel()`呼び出しになるぶん遅くはなるが、
+  どのみちシャッター音・UART転送（M5StickV-ATOM Lite間は115200bps、384×512dotで
+  約17秒程度）で数秒〜数十秒かかる処理なので、メモリを使い切って落ちるよりはこちらを
+  優先した。
+- **補正されるのはATOM Lite側へ転送される写真のみ**。M5StickV自身のライブプレビュー画面は
+  向きを直していない（毎フレーム回転すると重すぎるため）ので、構えている間の画面表示は
+  そのまま（横倒しの向き）で、撮影・送信した写真だけ正しい向きになる。
+- 別の回転が必要になった場合は、`send_frame()`内の座標変換式を直接書き換えること
+  （関数のdocstringに式の導出根拠を書いてある）。
+
+### 顔検出
+
+M5StickV側でHaar cascade（`image.HaarCascade("frontalface")`、MaixPy標準搭載・別途kmodelファイル不要）
+による顔検出を常時実行する。
+
+- **ライブプレビュー**: 画面に顔が写っていれば、その周りに白い枠を表示する（速度確保のため
+  縮小コピー上で検出→座標を元解像度に拡大して描画。`FACE_DETECT_EVERY_N_FRAMES`フレームごとに
+  再検出し、間のフレームは直前の枠を使い回す）。
+- **撮影時**: シャッターを押した瞬間のフレームでもう一度検出し、「Face」（複数人なら
+  「Face x2」など）というラベルを生成。ATOM Lite側への画像転送時に、この文字列を画像データと
+  一緒に送る（顔が写っていなければラベルは空文字）。何も検出できなかった場合はラベルなしで
+  送信されるだけで、撮影・印刷自体は通常どおり続行される。
+- ATOM Lite側で受信したラベルは、m5webページの「M5StickVカメラ」カードで画像の下に
+  「検出: Face」のように表示され、ギャラリーに保存された写真にもキャプションとして残る
+  （`src/gallery.cpp`がPreferences (NVS) に写真IDごとに保存）。
+
+顔以外の判定はまだ実装していない（K210のKPUを使った物体分類などを追加すれば、同じラベル欄に
+乗せて拡張できる設計にはしてある）。
+
 ### Web上での確認・印刷モード
 
 m5webページの「M5StickVカメラ」カードで、受信した写真の扱いを2種類から選べる（設定はATOM Lite
@@ -138,14 +188,32 @@ NVSに保存される。ここで設定した値は**次に受信するフレー
 ディザリング変換する前に適用される（画像アップロードカードと同じ計算式）。既に受信・表示中の
 1枚には遡って反映されない。
 
+### ATOM Lite本体のRGB LED
+
+ATOM Lite本体にも内蔵RGB LED（G27, SK6812）があり、M5StickV側のLED（白=処理中/緑=送信完了）とは
+独立して、`src/led.*`が以下のように点灯制御する。
+
+- **緑点滅5回**: 新しい写真がギャラリーに保存されたとき（M5StickVカメラ撮影・写真アップロード
+  印刷のどちらでも、自動印刷/プレビュー確認方式を問わず発生）。
+- **緑点灯（点滅なし・印刷できる写真があるあいだずっと点灯）**: 次のいずれかが真のあいだ点灯し続ける。
+  - ギャラリーに写真が1枚以上保存されている（＝いつでも再印刷できる状態。起動時に既存の保存枚数を
+    見て復元されるため、再起動をまたいでも正しく点灯する）。
+  - プレビュー確認方式で、印刷するかどうかの確認待ちの写真がある（「印刷」または「破棄」で解消）。
+  
+  ギャラリーが空になり、かつ確認待ちの写真も無くなったときのみ消灯する。
+
 ### 通信プロトコル
 
 ```
-"M5PV" (4 byte) | width u16 LE | height u16 LE | width*height byte グレースケール(行優先) | checksum 1 byte
+"M5PV" (4 byte) | width u16 LE | height u16 LE | labelLen u8 | label (labelLen byte, UTF-8)
+| width*height byte グレースケール(行優先) | checksum 1 byte
 ```
-`width`は384固定（`Printer::kPrintWidthDots`と一致必須）。チェックサムは全ピクセルバイトのmod 256の和。
-フレーム全体を受信・ディザリングし終えてから印刷するかどうかを判断する設計のため、チェックサムが
-不一致だった場合は事後閲覧方式であっても自動印刷せず、確認待ち状態にして印刷を止める。
+`width`は384固定（`Printer::kPrintWidthDots`と一致必須）。`label`は顔検出などの結果を表す短い文字列
+（例: `"Face"`）で、何も無ければ`labelLen`=0で省略される（`src/camera_link.h`の`kMaxLabelLen`=31バイト
+上限、超過分はATOM Lite側で切り詰められるが、ストリームがズレないよう受信自体は宣言された長さぶん
+必ず読み切る）。チェックサムはlabelバイト列＋全ピクセルバイトのmod 256の和。フレーム全体を受信・
+ディザリングし終えてから印刷するかどうかを判断する設計のため、チェックサムが不一致だった場合は
+事後閲覧方式であっても自動印刷せず、確認待ち状態にして印刷を止める。
 
 ### 既知の注意点
 
@@ -160,6 +228,18 @@ NVSに保存される。ここで設定した値は**次に受信するフレー
   M5Stack公式サンプルのピン割り当てに準拠しているが、こちらも実機未確認。
 - 内蔵RGB LEDは`board_info.LED_W`/`LED_G`（アクティブLow、`value(0)`で点灯）を使用。
   `fm.fpioa.GPIO2`/`GPIO3`に割り当てている（`GPIO0`はスピーカー、`GPIO1`はボタンAが使用中のため）。
+- 顔検出（`image.HaarCascade("frontalface")`, `find_features(threshold=0.5, scale_factor=1.25)`）は
+  実機で`MemoryError: Out of normal MicroPython Heap Memory!`が発生することを確認済み。原因は
+  Haar cascade自体が入力画像サイズに比例した内部スクラッチバッファをヒープから確保するため
+  （K210のMicroPythonヒープは小さい）。対策として`detect_faces()`は縮小コピー上でのみ実行し、
+  `MemoryError`も捕捉して「顔なし」として処理を継続する（撮影・印刷自体は止まらない）。
+  ただし最初に縮小しすぎ（`FACE_DETECT_DIVISOR_LIVE`=8, `_CAPTURE`=5 → 80×60/128×96）て
+  クラッシュは止まったが顔が全く検出されなくなったため、現在は`_LIVE`=4, `_CAPTURE`=3
+  （160×120/213×160）に戻してある。`MemoryError`のログ（シリアルモニタに
+  `face detection skipped (out of heap)`と出る）が再発する場合は各`FACE_DETECT_DIVISOR_*`を
+  大きく、逆に検出が弱い場合は小さくして調整すること（ライブ検出時は毎フレーム
+  `live face detect: N found`もログに出るので、検出自体が動いているか確認できる）。
+  誤検出/未検出の多さは`threshold`/`scale_factor`でも調整する。
 
 ## 制限事項
 
@@ -181,6 +261,8 @@ src/
   web_server.*        m5webのHTTP API (状態取得, Wi-Fi設定, 画像/テキスト/QR印刷)
   dither.*            誤差拡散(Floyd–Steinberg)の行ストリーミング実装（camera_linkが使用）
   camera_link.*        M5StickVからのUART直結カメラ画像受信 → バッファ保持 → 事後閲覧/プレビュー確認
+  gallery.*            印刷した写真をLittleFSに保存・一覧・削除・再印刷する履歴機能
+  led.*                ATOM Lite内蔵RGB LEDの点灯制御（新着通知の点滅・確認待ちの点灯）
 data/
   index.html          m5web本体（UI + Canvas画像変換, 外部CDN依存なし・単一ファイル）
 arduino/m5web/
@@ -206,12 +288,16 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/print/test` | 配線確認用の固定テストページを印刷（UI上のボタンは無いが引き続き利用可） |
 | POST | `/api/print/image/begin` | `w`,`h` (form) で次の画像サイズを予約 (wは384固定, h<=`maxHeightDots`) |
 | POST | `/api/print/image` | multipart/form-dataで1bpp生ビットマップ本体をアップロード→即印刷 |
-| GET | `/api/camera/status` | M5StickVカメラの状態JSON (`mode`,`frameReady`,`pendingPrint`,`width`,`height`,`frameSeq`,`brightness`,`contrast`) |
+| GET | `/api/camera/status` | M5StickVカメラの状態JSON (`mode`,`frameReady`,`pendingPrint`,`width`,`height`,`frameSeq`,`brightness`,`contrast`,`label`) |
 | POST | `/api/camera/mode` | `mode`=`auto`または`preview` (form) で確認モードを切り替え（再起動後も保持） |
 | POST | `/api/camera/settings` | `brightness`,`contrast` (form, -100〜100) で次フレームからの既定調整値を設定（再起動後も保持） |
 | GET | `/api/camera/frame` | 直近フレームの1bpp生ビットマップ（`X-Frame-Width`/`X-Frame-Height`ヘッダ付き） |
 | POST | `/api/camera/print` | 直近フレームを印刷（確認待ちならそれを確定、そうでなければ再印刷） |
 | POST | `/api/camera/discard` | プレビュー確認方式で確認待ちのフレームを破棄 |
+| GET | `/api/gallery` | 保存済み写真の一覧JSON (`maxEntries`, `entries[]`=`id`,`height`,`bytes`,`label`) |
+| GET | `/api/gallery/frame` | `id` (query) で指定した写真の1bpp生ビットマップ（`X-Frame-Width`/`X-Frame-Height`ヘッダ付き） |
+| POST | `/api/gallery/print` | `id` (query) で指定した写真を再印刷 |
+| POST | `/api/gallery/delete` | `id` (query) で指定した写真をLittleFSから削除 |
 
 ### curl例
 
