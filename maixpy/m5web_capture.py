@@ -59,6 +59,12 @@ speaker.channel_config(speaker.CHANNEL_1, I2S.TRANSMITTER, resolution=I2S.RESOLU
                         align_mode=I2S.STANDARD_MODE)
 
 
+def flash_screen():
+    """Brief full-screen white flash for shutter feedback — M5StickV has no
+    dedicated indicator LED, so the LCD itself doubles as one."""
+    lcd.clear(lcd.WHITE)
+
+
 def play_shutter():
     """Best-effort camera-click sound; a missing/bad wav must never block a capture."""
     try:
@@ -108,7 +114,8 @@ while True:
         time.sleep_ms(50)  # debounce
         if button.value() == 0:
             still = sensor.snapshot()
-            play_shutter()
+            flash_screen()
+            play_shutter()  # blocks ~100ms; screen stays white for roughly that long
             lcd.draw_string(4, 4, "Sending...", lcd.WHITE, lcd.BLACK)
             lcd.display(still)
             w, h = send_frame(still)
