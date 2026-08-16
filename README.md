@@ -106,11 +106,11 @@ Grove 4ピン（GND + 信号線2本のみ結線。VCC同士は繋がない — �
    `m5web_capture.py`は`main.py`として保存するか、IDEから直接実行する。
 2. ATOM Lite側は`CameraLink`モジュールが常時UART1(G26/G32, 115200bps)を待ち受けるので、
    ファームウェア側の追加設定は不要（通常のPlatformIO/Arduino書き込みのみでOK）。
-3. M5StickVのボタン(A)を押すと、画面全体を白く光らせてシャッター音を鳴らしながら撮影→
-   384dot幅にリサイズ→ATOM Lite側へ送信。届いた画像はATOM Lite側で明るさ・コントラスト調整と
+3. M5StickVのボタン(A)を押すと、画面を白く光らせ内蔵RGB LEDも白色点灯・シャッター音を鳴らして
+   撮影→384dot幅にリサイズ→ATOM Lite側へ送信。送信が完了するとRGB LEDが緑色に一瞬点灯して消灯する
+   （白=処理中、緑=送信完了の合図）。届いた画像はATOM Lite側で明るさ・コントラスト調整と
    ディザリング（誤差拡散、`src/dither.cpp`）を経てRAMに保持され、m5webページの
    「M5StickVカメラ」カードで確認できる（M5StickV側はグレースケール画像を送るだけでよい）。
-   M5StickVには専用インジケータLEDが無いため、画面（LCD）をフラッシュ代わりに使っている。
    シャッター音はベストエフォートで、`shutter.wav`が無い/読めない場合もエラーにせず撮影・送信は
    続行される。
 
@@ -153,6 +153,8 @@ NVSに保存される。ここで設定した値は**次に受信するフレー
 - `board_info.BUTTON_A`はM5StickVのボタンAを指す想定（Sipeed公式のMaixPyサンプルに準拠）。
 - シャッター音は`board_info.SPK_SD`/`SPK_DIN`/`SPK_BCLK`/`SPK_LRCLK` + `I2S.DEVICE_1`という
   M5Stack公式サンプルのピン割り当てに準拠しているが、こちらも実機未確認。
+- 内蔵RGB LEDは`board_info.LED_W`/`LED_G`（アクティブLow、`value(0)`で点灯）を使用。
+  `fm.fpioa.GPIO2`/`GPIO3`に割り当てている（`GPIO0`はスピーカー、`GPIO1`はボタンAが使用中のため）。
 
 ## 制限事項
 
@@ -180,7 +182,7 @@ arduino/m5web/
   m5web.ino + 同名の*.h/*.cpp/data/  Arduino IDE用の手動同期コピー（上記と同内容）
 maixpy/
   m5web_capture.py    M5StickV側スクリプト（撮影→シャッター音→リサイズ→UART送信）
-  shutter.wav          シャッター音（16kHz/mono/16bit, 100ms、m5web_capture.pyが再生）
+  shutter.wav          シャッター音（16kHz/mono/16bit, 180ms、m5web_capture.pyが再生）
 ```
 
 ## API

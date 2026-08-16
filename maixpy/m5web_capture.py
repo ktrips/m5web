@@ -45,6 +45,15 @@ uart = UART(UART.UART1, BAUD, 8, 0, 0, timeout=1000, read_buf_len=4096)
 fm.register(board_info.BUTTON_A, fm.fpioa.GPIO1, force=True)
 button = GPIO(GPIO.GPIO1, GPIO.IN, GPIO.PULL_UP)
 
+# Onboard RGB LED: white while a capture is in progress, a brief green
+# blink once the frame has been sent, then off. Active-low (0=on, 1=off).
+fm.register(board_info.LED_W, fm.fpioa.GPIO2, force=True)
+fm.register(board_info.LED_G, fm.fpioa.GPIO3, force=True)
+led_w = GPIO(GPIO.GPIO2, GPIO.OUT)
+led_g = GPIO(GPIO.GPIO3, GPIO.OUT)
+led_w.value(1)
+led_g.value(1)
+
 # Onboard speaker (M5StickV's built-in I2S DAC + amp), per M5Stack's own
 # MaixPy example — SPK_SD is the amplifier enable/shutdown pin, must be
 # driven high before playback.
@@ -114,11 +123,16 @@ while True:
         time.sleep_ms(50)  # debounce
         if button.value() == 0:
             still = sensor.snapshot()
+            led_w.value(0)  # white on: capture/send in progress
             flash_screen()
-            play_shutter()  # blocks ~100ms; screen stays white for roughly that long
+            play_shutter()  # blocks while the wav plays; screen stays white meanwhile
             lcd.draw_string(4, 4, "Sending...", lcd.WHITE, lcd.BLACK)
             lcd.display(still)
             w, h = send_frame(still)
+            led_w.value(1)  # white off
+            led_g.value(0)  # green on: send complete
+            time.sleep_ms(400)
+            led_g.value(1)  # green off
             print("sent %dx%d" % (w, h))
             while button.value() == 0:  # wait for release before re-arming
                 time.sleep_ms(20)

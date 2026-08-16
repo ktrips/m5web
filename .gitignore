@@ -2,3 +2,6 @@
 .vscode/
 .DS_Store
 __pycache__/
+
+# Local M5StickV deployment copy (renamed from m5web_capture.py for upload) — not source of truth.
+maixpy/main.py
