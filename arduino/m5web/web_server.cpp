@@ -156,9 +156,20 @@ void handleCameraStatus() {
     json += "\"pendingPrint\":" + String(s.pendingPrint ? "true" : "false") + ",";
     json += "\"width\":" + String(s.width) + ",";
     json += "\"height\":" + String(s.height) + ",";
-    json += "\"frameSeq\":" + String(s.frameSeq);
+    json += "\"frameSeq\":" + String(s.frameSeq) + ",";
+    json += "\"brightness\":" + String(s.brightness) + ",";
+    json += "\"contrast\":" + String(s.contrast);
     json += "}";
     server.send(200, "application/json", json);
+}
+
+void handleCameraSettings() {
+    if (!server.hasArg("brightness") || !server.hasArg("contrast")) {
+        sendPlain(400, "brightness and contrast required");
+        return;
+    }
+    CameraLink::setAdjust((int)server.arg("brightness").toInt(), (int)server.arg("contrast").toInt());
+    sendPlain(200, "OK");
 }
 
 void handleCameraModeSet() {
@@ -226,6 +237,7 @@ void begin() {
     server.on("/api/print/image", HTTP_POST, handleImageUploadComplete, handleImageUploadChunk);
     server.on("/api/camera/status", HTTP_GET, handleCameraStatus);
     server.on("/api/camera/mode", HTTP_POST, handleCameraModeSet);
+    server.on("/api/camera/settings", HTTP_POST, handleCameraSettings);
     server.on("/api/camera/print", HTTP_POST, handleCameraPrint);
     server.on("/api/camera/discard", HTTP_POST, handleCameraDiscard);
     server.on("/api/camera/frame", HTTP_GET, handleCameraFrame);

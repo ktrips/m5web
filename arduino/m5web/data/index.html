@@ -164,6 +164,11 @@
       <input type="radio" name="camMode" id="camModePreview" value="preview">
       <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷）</label>
     </div>
+    <label>初期設定: 明るさ <span id="camBrightnessVal">0</span></label>
+    <input type="range" id="camBrightness" min="-100" max="100" value="0">
+    <label>初期設定: コントラスト <span id="camContrastVal">0</span></label>
+    <input type="range" id="camContrast" min="-100" max="100" value="0">
+    <p class="meta">次に撮影される写真から反映されます（表示中の写真には反映されません）。</p>
     <div class="preview-wrap hidden" id="camPreviewWrap">
       <canvas id="camPreviewCanvas"></canvas>
     </div>
@@ -574,6 +579,7 @@ $("printQrBtn").addEventListener("click", async () => {
 // ---------- M5StickV camera ----------
 
 let camLastSeq = -1;
+let camSettingsLoaded = false;
 
 function unpackAndDraw(canvas, buf, w, h) {
   const bytesPerRow = w / 8;
@@ -613,6 +619,14 @@ async function refreshCameraStatus() {
     const modeEl = document.getElementById(s.mode === "preview" ? "camModePreview" : "camModeAuto");
     modeEl.checked = true;
 
+    if (!camSettingsLoaded) {
+      camSettingsLoaded = true;
+      $("camBrightness").value = s.brightness;
+      $("camContrast").value = s.contrast;
+      $("camBrightnessVal").textContent = s.brightness;
+      $("camContrastVal").textContent = s.contrast;
+    }
+
     if (!s.frameReady) {
       $("camActions").classList.add("hidden");
       $("camMeta").textContent = "まだ写真がありません";
@@ -646,6 +660,27 @@ document.querySelectorAll('input[name="camMode"]').forEach((el) => {
     }
   });
 });
+
+async function saveCameraSettings() {
+  try {
+    await fetch("/api/camera/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `brightness=${$("camBrightness").value}&contrast=${$("camContrast").value}`,
+    });
+  } catch (err) {
+    /* ignore; next status poll will resync the sliders */
+  }
+}
+
+$("camBrightness").addEventListener("input", () => {
+  $("camBrightnessVal").textContent = $("camBrightness").value;
+});
+$("camContrast").addEventListener("input", () => {
+  $("camContrastVal").textContent = $("camContrast").value;
+});
+$("camBrightness").addEventListener("change", saveCameraSettings);
+$("camContrast").addEventListener("change", saveCameraSettings);
 
 $("camPrintBtn").addEventListener("click", async () => {
   const msg = $("camMsg");

@@ -37,12 +37,34 @@ Dither::RowDitherer ditherer;
 
 Preferences prefs;
 Mode currentMode = Mode::kAuto;
+int8_t currentBrightness = 0;  // -100..100, same range/meaning as the JS slider
+int8_t currentContrast = 0;
 
 uint8_t frameBuffer[(size_t)Printer::kPrintWidthBytes * kMaxHeightDots];
 uint16_t frameHeight = 0;
 bool frameReady = false;
 bool pendingPrint = false;
 uint32_t frameSeq = 0;
+
+int8_t clampAdjust(int v) {
+    if (v < -100) return -100;
+    if (v > 100) return 100;
+    return (int8_t)v;
+}
+
+// Same brightness/contrast formula as data/index.html's toGrayscale(), so a
+// camera frame and a phone-uploaded photo with the same slider values look
+// the same. Applied in place, before dithering.
+void applyBrightnessContrast(uint8_t *row, uint16_t width) {
+    if (currentBrightness == 0 && currentContrast == 0) return;
+    float factor = (259.0f * (currentContrast + 255)) / (255.0f * (259 - currentContrast));
+    for (uint16_t x = 0; x < width; x++) {
+        float g = factor * ((float)row[x] - 128.0f) + 128.0f + currentBrightness;
+        if (g < 0) g = 0;
+        if (g > 255) g = 255;
+        row[x] = (uint8_t)g;
+    }
+}
 
 void printStoredFrame() {
     Printer::reset();
@@ -132,6 +154,7 @@ void handleByte(uint8_t b) {
             rowBuf[rowByteIndex++] = b;
             checksumAccum += b;
             if (rowByteIndex == incomingWidth) {
+                applyBrightnessContrast(rowBuf, incomingWidth);
                 uint8_t *dst = frameBuffer + (size_t)rowsReceived * Printer::kPrintWidthBytes;
                 ditherer.processRow(rowBuf, dst);
                 rowByteIndex = 0;
@@ -154,6 +177,8 @@ void begin() {
     Serial1.begin(kBaud, SERIAL_8N1, kRxPin, kTxPin);
     prefs.begin("m5web_cam", false);
     currentMode = (prefs.getString("mode", "auto") == "preview") ? Mode::kPreview : Mode::kAuto;
+    currentBrightness = clampAdjust(prefs.getInt("brightness", 0));
+    currentContrast = clampAdjust(prefs.getInt("contrast", 0));
 }
 
 void poll() {
@@ -169,8 +194,16 @@ void setMode(Mode m) {
     prefs.putString("mode", m == Mode::kPreview ? "preview" : "auto");
 }
 
+void setAdjust(int brightness, int contrast) {
+    currentBrightness = clampAdjust(brightness);
+    currentContrast = clampAdjust(contrast);
+    prefs.putInt("brightness", currentBrightness);
+    prefs.putInt("contrast", currentContrast);
+}
+
 Status status() {
-    return Status{currentMode, frameReady, pendingPrint, Printer::kPrintWidthDots, frameHeight, frameSeq};
+    return Status{currentMode,        frameReady,        pendingPrint,     Printer::kPrintWidthDots,
+                  frameHeight,        frameSeq,           currentBrightness, currentContrast};
 }
 
 bool confirmPrint() {

@@ -32,6 +32,8 @@ struct Status {
     uint16_t width;
     uint16_t height;
     uint32_t frameSeq;   // increments each time a new frame is stored
+    int8_t brightness;   // default adjustment applied to future frames, -100..100
+    int8_t contrast;     // default adjustment applied to future frames, -100..100
 };
 
 void begin();
@@ -39,6 +41,14 @@ void poll();  // call every iteration of the main loop
 
 Mode mode();
 void setMode(Mode m);  // persisted across reboots
+
+// Brightness/contrast (clamped to -100..100, matching the phone-upload
+// UI's sliders) applied to every row of a frame before dithering.
+// Persisted across reboots. Only affects frames received *after* the
+// change — an already-buffered/pending frame is not retroactively
+// reprocessed. Takes `int` (not int8_t) so out-of-range input from an API
+// caller gets clamped rather than silently wrapping around.
+void setAdjust(int brightness, int contrast);
 
 Status status();
 

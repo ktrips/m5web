@@ -100,13 +100,17 @@ Grove 4ピン（GND + 信号線2本のみ結線。VCC同士は繋がない — �
 
 ### 導入手順
 
-1. [`maixpy/m5web_capture.py`](maixpy/m5web_capture.py) をMaixPy IDE経由でM5StickVに書き込む
-   （`main.py`として保存するか、IDEから直接実行）。
+1. [`maixpy/m5web_capture.py`](maixpy/m5web_capture.py) と [`maixpy/shutter.wav`](maixpy/shutter.wav)
+   の両方をMaixPy IDE経由でM5StickVに書き込む。`shutter.wav`は`/flash/shutter.wav`に置く
+   （SDカード運用なら`m5web_capture.py`冒頭の`SHUTTER_WAV`を`/sd/shutter.wav`に書き換える）。
+   `m5web_capture.py`は`main.py`として保存するか、IDEから直接実行する。
 2. ATOM Lite側は`CameraLink`モジュールが常時UART1(G26/G32, 115200bps)を待ち受けるので、
    ファームウェア側の追加設定は不要（通常のPlatformIO/Arduino書き込みのみでOK）。
-3. M5StickVのボタン(A)を押すと撮影→384dot幅にリサイズ→ATOM Lite側へ送信。届いた画像は
-   ATOM Lite側でディザリング（誤差拡散、`src/dither.cpp`）されてRAMに保持され、m5webページの
-   「M5StickVカメラ」カードで確認できる（M5StickV側はグレースケール画像を送るだけでよい）。
+3. M5StickVのボタン(A)を押すとシャッター音を鳴らして撮影→384dot幅にリサイズ→ATOM Lite側へ
+   送信。届いた画像はATOM Lite側で明るさ・コントラスト調整とディザリング（誤差拡散、
+   `src/dither.cpp`）を経てRAMに保持され、m5webページの「M5StickVカメラ」カードで確認できる
+   （M5StickV側はグレースケール画像を送るだけでよい）。シャッター音はベストエフォートで、
+   `shutter.wav`が無い/読めない場合もエラーにせず撮影・送信は続行される。
 
 ### Web上での確認・印刷モード
 
@@ -121,6 +125,11 @@ m5webページの「M5StickVカメラ」カードで、受信した写真の扱�
 いずれのモードでも、フレーム全体（ディザリング後の1bppビットマップ）をATOM Lite側のRAMに
 保持するため、カメラ経由の1枚あたりの最大高さは800dot（約100mm）に制限している
 （`src/camera_link.cpp`の`kMaxHeightDots`、写真アップロードAPIの2000dotとは別の上限）。
+
+同じカードに「初期設定: 明るさ／コントラスト」スライダーがあり（-100〜100、既定0）、これも
+NVSに保存される。ここで設定した値は**次に受信するフレームから**M5StickV側でグレースケール→
+ディザリング変換する前に適用される（画像アップロードカードと同じ計算式）。既に受信・表示中の
+1枚には遡って反映されない。
 
 ### 通信プロトコル
 
@@ -140,6 +149,8 @@ m5webページの「M5StickVカメラ」カードで、受信した写真の扱�
   もし印刷結果が斜めにズレる等おかしければ、スクリプト内にコメントアウトしてある`get_pixel(x,y)`版の
   ループに切り替えること（遅いが確実）。
 - `board_info.BUTTON_A`はM5StickVのボタンAを指す想定（Sipeed公式のMaixPyサンプルに準拠）。
+- シャッター音は`board_info.SPK_SD`/`SPK_DIN`/`SPK_BCLK`/`SPK_LRCLK` + `I2S.DEVICE_1`という
+  M5Stack公式サンプルのピン割り当てに準拠しているが、こちらも実機未確認。
 
 ## 制限事項
 
@@ -166,7 +177,8 @@ data/
 arduino/m5web/
   m5web.ino + 同名の*.h/*.cpp/data/  Arduino IDE用の手動同期コピー（上記と同内容）
 maixpy/
-  m5web_capture.py    M5StickV側スクリプト（撮影→リサイズ→UART送信）
+  m5web_capture.py    M5StickV側スクリプト（撮影→シャッター音→リサイズ→UART送信）
+  shutter.wav          シャッター音（8kHz/mono/16bit、m5web_capture.pyが再生）
 ```
 
 ## API
@@ -185,8 +197,9 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/print/test` | 配線確認用の固定テストページを印刷（UI上のボタンは無いが引き続き利用可） |
 | POST | `/api/print/image/begin` | `w`,`h` (form) で次の画像サイズを予約 (wは384固定, h<=`maxHeightDots`) |
 | POST | `/api/print/image` | multipart/form-dataで1bpp生ビットマップ本体をアップロード→即印刷 |
-| GET | `/api/camera/status` | M5StickVカメラの状態JSON (`mode`,`frameReady`,`pendingPrint`,`width`,`height`,`frameSeq`) |
+| GET | `/api/camera/status` | M5StickVカメラの状態JSON (`mode`,`frameReady`,`pendingPrint`,`width`,`height`,`frameSeq`,`brightness`,`contrast`) |
 | POST | `/api/camera/mode` | `mode`=`auto`または`preview` (form) で確認モードを切り替え（再起動後も保持） |
+| POST | `/api/camera/settings` | `brightness`,`contrast` (form, -100〜100) で次フレームからの既定調整値を設定（再起動後も保持） |
 | GET | `/api/camera/frame` | 直近フレームの1bpp生ビットマップ（`X-Frame-Width`/`X-Frame-Height`ヘッダ付き） |
 | POST | `/api/camera/print` | プレビュー確認方式で確認待ちのフレームを印刷 |
 | POST | `/api/camera/discard` | プレビュー確認方式で確認待ちのフレームを破棄 |
