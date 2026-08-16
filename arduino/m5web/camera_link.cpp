@@ -96,9 +96,12 @@ void finishIncomingFrame(uint8_t receivedChecksum) {
     frameHeight = incomingHeight;
     frameReady = true;
     frameSeq++;
+    Serial.printf("[camera_link] frame received: %ux%u (mode=%s, checksum=%s)\n", Printer::kPrintWidthDots,
+                  frameHeight, currentMode == Mode::kPreview ? "preview" : "auto", checksumOk ? "ok" : "FAIL");
     if (currentMode == Mode::kAuto && checksumOk) {
         pendingPrint = false;
         printStoredFrame();
+        Serial.println("[camera_link] auto-printed");
     } else {
         // Preview mode, or a corrupted frame in auto mode: never print
         // without either an explicit checksum pass or a human confirming.
@@ -192,6 +195,7 @@ Mode mode() { return currentMode; }
 void setMode(Mode m) {
     currentMode = m;
     prefs.putString("mode", m == Mode::kPreview ? "preview" : "auto");
+    Serial.printf("[camera_link] mode set to %s\n", m == Mode::kPreview ? "preview" : "auto");
 }
 
 void setAdjust(int brightness, int contrast) {
@@ -199,6 +203,7 @@ void setAdjust(int brightness, int contrast) {
     currentContrast = clampAdjust(contrast);
     prefs.putInt("brightness", currentBrightness);
     prefs.putInt("contrast", currentContrast);
+    Serial.printf("[camera_link] brightness=%d contrast=%d\n", currentBrightness, currentContrast);
 }
 
 Status status() {

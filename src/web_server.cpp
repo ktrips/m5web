@@ -75,6 +75,7 @@ void handlePrintText() {
         sendPlain(400, "text required");
         return;
     }
+    Serial.printf("[web] print text (%u chars)\n", server.arg("text").length());
     Printer::reset();
     Printer::printText(server.arg("text"));
     Printer::newLine(3);
@@ -82,6 +83,7 @@ void handlePrintText() {
 }
 
 void handlePrintTest() {
+    Serial.println("[web] print test page");
     Printer::printTestPage();
     sendPlain(200, "OK");
 }
@@ -96,6 +98,7 @@ void handlePrintQr() {
         sendPlain(400, "url too long (max " + String(kMaxQrLength) + " chars)");
         return;
     }
+    Serial.printf("[web] print QR: %s\n", data.c_str());
     Printer::reset();
     Printer::printQRCode(data);
     sendPlain(200, "OK");
@@ -115,6 +118,7 @@ void handleImageBegin() {
     }
     pendingWidth = w;
     pendingHeight = h;
+    Serial.printf("[web] image reserved: %ux%u\n", w, h);
     sendPlain(200, "OK");
 }
 
@@ -123,6 +127,7 @@ void handleImageUploadComplete() {
         sendPlain(400, "call /api/print/image/begin first");
         return;
     }
+    Serial.printf("[web] image printed: %ux%u\n", pendingWidth, pendingHeight);
     pendingWidth = 0;
     pendingHeight = 0;
     sendPlain(200, "printed");
@@ -182,6 +187,7 @@ void handleCameraModeSet() {
         sendPlain(400, "mode must be 'auto' or 'preview'");
         return;
     }
+    Serial.printf("[web] camera mode set to '%s'\n", m.c_str());
     CameraLink::setMode(m == "preview" ? CameraLink::Mode::kPreview : CameraLink::Mode::kAuto);
     sendPlain(200, "OK");
 }
@@ -191,11 +197,13 @@ void handleCameraPrint() {
         sendPlain(400, "no pending frame");
         return;
     }
+    Serial.println("[web] camera frame printed (confirmed)");
     sendPlain(200, "OK");
 }
 
 void handleCameraDiscard() {
     CameraLink::discardPending();
+    Serial.println("[web] camera frame discarded");
     sendPlain(200, "OK");
 }
 

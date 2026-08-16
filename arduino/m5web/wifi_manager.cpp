@@ -45,17 +45,23 @@ void startAP() {
     WiFi.softAP(apName);
     dnsServer.start(kDnsPort, "*", kApIP);
     currentMode = Mode::kAccessPoint;
+    Serial.printf("[wifi] AP mode: ssid=%s ip=%s\n", apName, kApIP.toString().c_str());
 }
 
 bool tryStationConnect(const String &ssid, const String &password, unsigned long timeoutMs) {
+    Serial.printf("[wifi] connecting to '%s'...\n", ssid.c_str());
     WiFi.mode(WIFI_STA);
     WiFi.setHostname("m5web");
     WiFi.begin(ssid.c_str(), password.c_str());
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED) {
-        if (millis() - start > timeoutMs) return false;
+        if (millis() - start > timeoutMs) {
+            Serial.printf("[wifi] connect to '%s' timed out\n", ssid.c_str());
+            return false;
+        }
         delay(200);
     }
+    Serial.printf("[wifi] connected: ssid=%s ip=%s\n", ssid.c_str(), WiFi.localIP().toString().c_str());
     return true;
 }
 
@@ -80,6 +86,7 @@ void loop() {
     } else if (currentMode == Mode::kStation && WiFi.status() != WL_CONNECTED) {
         if (millis() - lastReconnectAttemptMs > 10000) {
             lastReconnectAttemptMs = millis();
+            Serial.println("[wifi] disconnected, reconnecting...");
             WiFi.reconnect();
         }
     }
@@ -135,6 +142,7 @@ bool connect(const String &newSsid, const String &newPassword) {
 }
 
 void forgetAndRestart() {
+    Serial.println("[wifi] forgetting saved credentials, restarting...");
     prefs.remove("ssid");
     prefs.remove("pass");
     prefs.end();
