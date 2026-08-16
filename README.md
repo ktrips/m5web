@@ -178,7 +178,7 @@ arduino/m5web/
   m5web.ino + 同名の*.h/*.cpp/data/  Arduino IDE用の手動同期コピー（上記と同内容）
 maixpy/
   m5web_capture.py    M5StickV側スクリプト（撮影→シャッター音→リサイズ→UART送信）
-  shutter.wav          シャッター音（8kHz/mono/16bit、m5web_capture.pyが再生）
+  shutter.wav          シャッター音（16kHz/mono/16bit, 60ms、m5web_capture.pyが再生）
 ```
 
 ## API
