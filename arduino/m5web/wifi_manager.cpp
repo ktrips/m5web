@@ -5,6 +5,8 @@
 #include <Preferences.h>
 #include <WiFi.h>
 
+#include "clock.h"
+
 namespace WifiManager {
 
 namespace {
@@ -33,6 +35,11 @@ void startMDNS() {
     if (MDNS.begin("m5web")) {
         MDNS.addService("http", "tcp", 80);
     }
+}
+
+void onStationConnected() {
+    startMDNS();
+    Clock::begin();  // non-blocking; syncs in the background over the next few seconds
 }
 
 void startAP() {
@@ -74,7 +81,7 @@ void begin() {
 
     if (savedSsid.length() > 0 && tryStationConnect(savedSsid, savedPass, 15000)) {
         currentMode = Mode::kStation;
-        startMDNS();
+        onStationConnected();
         return;
     }
     startAP();
@@ -137,7 +144,7 @@ bool connect(const String &newSsid, const String &newPassword) {
         WiFi.softAPdisconnect(true);
     }
     currentMode = Mode::kStation;
-    startMDNS();
+    onStationConnected();
     return true;
 }
 

@@ -4,6 +4,8 @@
 #include <WebServer.h>
 
 #include "camera_link.h"
+#include "caption.h"
+#include "clock.h"
 #include "gallery.h"
 #include "led.h"
 #include "printer.h"
@@ -22,6 +24,7 @@ uint16_t pendingWidth = 0;
 uint16_t pendingHeight = 0;
 bool imageInProgress = false;
 uint16_t uploadGalleryId = 0;
+uint16_t uploadBandHeight = 0;  // extra caption rows appended after this upload's image, 0 if none
 
 void sendPlain(int code, const String &body) {
     server.send(code, "text/plain", body);
@@ -154,7 +157,13 @@ void handleImageUploadChunk() {
         imageInProgress = (pendingWidth != 0 && pendingHeight != 0);
         if (imageInProgress) {
             Printer::reset();
-            Printer::beginRaster(pendingWidth, pendingHeight);
+            // A print-time timestamp is appended as extra rows after the
+            // image (see Caption) — decided upfront so beginRaster()'s
+            // declared height already accounts for it; phone uploads have
+            // no detection label, so this is skipped entirely if the
+            // clock hasn't synced yet rather than printing a blank band.
+            uploadBandHeight = (Clock::isSynced() && pendingHeight > Caption::kBandHeight) ? Caption::kBandHeight : 0;
+            Printer::beginRaster(pendingWidth, pendingHeight + uploadBandHeight);
             // Streamed straight to flash alongside the printer feed so a
             // tall (up to kMaxHeightDots) image never has to be buffered
             // whole in RAM just to also save it to the gallery.
@@ -170,6 +179,11 @@ void handleImageUploadChunk() {
         }
     } else if (upload.status == UPLOAD_FILE_END) {
         if (imageInProgress) {
+            if (uploadBandHeight > 0) {
+                uint8_t band[Printer::kPrintWidthBytes * Caption::kBandHeight];
+                Caption::stamp(band, Printer::kPrintWidthBytes, Clock::nowHHMM().c_str());
+                Printer::feedRasterChunk(band, (size_t)Printer::kPrintWidthBytes * uploadBandHeight);
+            }
             Printer::endRaster();
             if (uploadGalleryId != 0) {
                 Gallery::endSave();
@@ -264,7 +278,8 @@ void handleGalleryList() {
         if (i > 0) json += ",";
         json += "{\"id\":" + String(entries[i].id) + ",\"height\":" + String(entries[i].height) +
                 ",\"bytes\":" + String((unsigned)entries[i].bytes) +
-                ",\"label\":\"" + jsonEscape(entries[i].label) + "\"}";
+                ",\"label\":\"" + jsonEscape(entries[i].label) + "\"" +
+                ",\"savedAt\":\"" + jsonEscape(entries[i].savedAt) + "\"}";
     }
     json += "]}";
     server.send(200, "application/json", json);

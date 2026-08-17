@@ -2,6 +2,8 @@
 
 #include <Preferences.h>
 
+#include "caption.h"
+#include "clock.h"
 #include "dither.h"
 #include "gallery.h"
 #include "led.h"
@@ -75,9 +77,23 @@ void applyBrightnessContrast(uint8_t *row, uint16_t width) {
 }
 
 void printStoredFrame() {
+    // Appended as extra rows after the image, not overlaid onto its own
+    // last rows — frameBuffer (also served to the web UI via
+    // /api/camera/frame) stays untouched, and a caption never covers real
+    // photo content even if e.g. a detected face sits near the bottom.
+    String caption = Caption::combine(frameLabel, Clock::nowHHMM().c_str());
+    uint16_t bandHeight = (caption.length() > 0 && frameHeight > Caption::kBandHeight) ? Caption::kBandHeight : 0;
+
     Printer::reset();
-    Printer::beginRaster(Printer::kPrintWidthDots, frameHeight);
+    Printer::beginRaster(Printer::kPrintWidthDots, frameHeight + bandHeight);
     Printer::feedRasterChunk(frameBuffer, (size_t)Printer::kPrintWidthBytes * frameHeight);
+
+    if (bandHeight > 0) {
+        uint8_t band[Printer::kPrintWidthBytes * Caption::kBandHeight];
+        Caption::stamp(band, Printer::kPrintWidthBytes, caption.c_str());
+        Printer::feedRasterChunk(band, sizeof(band));
+    }
+
     Printer::endRaster();
 }
 

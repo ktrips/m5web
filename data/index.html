@@ -83,6 +83,12 @@
   .radio-line { display: flex; align-items: center; gap: 6px; font-size: 14px; margin: 6px 0; }
   .hidden { display: none !important; }
   footer { text-align: center; color: var(--sub); font-size: 11px; margin-top: 8px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab-btn {
+    flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #1b1c20; color: var(--sub); font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .tab-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; margin-top: 4px; }
   .gallery-item { background: #1b1c20; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
   .gallery-thumb { background: #fff; display: flex; align-items: center; justify-content: center; min-height: 48px; }
@@ -90,6 +96,7 @@
   .gallery-actions { display: flex; gap: 4px; padding: 4px; }
   .gallery-actions button { flex: 1; padding: 6px 4px; font-size: 12px; font-weight: 500; }
   .gallery-label { font-size: 11px; color: var(--accent); text-align: center; padding: 0 4px 4px; }
+  .gallery-date { font-size: 10px; color: var(--sub); text-align: center; padding: 0 4px 4px; }
   .detect-label {
     display: inline-flex; align-self: center; margin: 8px 0 0; font-size: 12px; font-weight: 600;
     color: var(--accent); background: rgba(61,139,253,.15); padding: 4px 10px; border-radius: 20px;
@@ -106,6 +113,7 @@
       <span class="badge"><span class="dot" id="statusDot"></span><span id="statusText">確認中…</span></span>
       <span class="badge" id="ipBadge"></span>
     </div>
+    <p class="meta">同じWi-Fi内の端末から <b>http://m5web.local</b> にアクセスできます。</p>
   </div>
 
   <div class="card hidden" id="wifiCard">
@@ -125,93 +133,126 @@
     <p class="meta">接続に成功すると本機のAPは終了します。iPhoneを同じWi-Fiに繋ぎ直し、<b>http://m5web.local</b> を開いてください。</p>
   </div>
 
-  <div class="card">
-    <h2>画像を印刷</h2>
-    <label class="file-btn primary full" for="fileInput">写真を選択…</label>
-    <input type="file" id="fileInput" accept="image/*">
+  <div class="tabs">
+    <button type="button" class="tab-btn active" data-tab="print">プリント</button>
+    <button type="button" class="tab-btn" data-tab="settings">設定</button>
+  </div>
 
-    <div class="preview-wrap hidden" id="previewWrap">
-      <canvas id="previewCanvas"></canvas>
+  <div class="tab-content" id="tabPrint">
+    <div class="card">
+      <h2>M5StickVカメラ</h2>
+      <p class="meta">M5StickVをシリアル直結すると、撮った写真をここに表示できます。</p>
+      <div class="preview-wrap hidden" id="camPreviewWrap">
+        <canvas id="camPreviewCanvas"></canvas>
+      </div>
+      <p class="detect-label hidden" id="camLabel"></p>
+      <p class="meta" id="camMeta">まだ写真がありません</p>
+      <div class="btn-row hidden" id="camActions">
+        <button class="primary" id="camPrintBtn">印刷</button>
+        <button class="secondary hidden" id="camDiscardBtn">破棄</button>
+      </div>
+      <div class="msg" id="camMsg"></div>
     </div>
 
-    <div id="imageControls" class="hidden">
-      <div class="grid2">
-        <div>
-          <label>変換方式</label>
-          <select id="ditherMode">
-            <option value="fs" selected>誤差拡散 (写真向け)</option>
-            <option value="ordered">ドット網掛け</option>
-            <option value="threshold">2値化 (文字/線画向け)</option>
-          </select>
-        </div>
-        <div>
-          <label>回転</label>
-          <button type="button" class="secondary full" id="rotateBtn">90°回転</button>
-        </div>
+    <div class="card">
+      <h2>画像を印刷</h2>
+      <label class="file-btn primary full" for="fileInput">写真を選択…</label>
+      <input type="file" id="fileInput" accept="image/*">
+
+      <div class="preview-wrap hidden" id="previewWrap">
+        <canvas id="previewCanvas"></canvas>
       </div>
-      <label>明るさ <span id="brightnessVal">0</span></label>
-      <input type="range" id="brightness" min="-100" max="100" value="0">
-      <label>コントラスト <span id="contrastVal">0</span></label>
-      <input type="range" id="contrast" min="-100" max="100" value="0">
+
+      <div id="imageControls" class="hidden">
+        <div class="grid2">
+          <div>
+            <label>変換方式</label>
+            <select id="ditherMode">
+              <option value="fs" selected>誤差拡散 (写真向け)</option>
+              <option value="ordered">ドット網掛け</option>
+              <option value="threshold">2値化 (文字/線画向け)</option>
+            </select>
+          </div>
+          <div>
+            <label>回転</label>
+            <button type="button" class="secondary full" id="rotateBtn">90°回転</button>
+          </div>
+        </div>
+        <label>明るさ <span id="brightnessVal">0</span></label>
+        <input type="range" id="brightness" min="-100" max="100" value="0">
+        <label>コントラスト <span id="contrastVal">0</span></label>
+        <input type="range" id="contrast" min="-100" max="100" value="0">
+        <div class="radio-line">
+          <input type="checkbox" id="invert">
+          <label for="invert" style="margin:0;color:var(--text)">反転（白黒逆）</label>
+        </div>
+        <p class="meta" id="imageMeta"></p>
+        <button class="primary full" id="printImageBtn" style="margin-top:8px">この画像を印刷</button>
+        <progress id="imageProgress" max="100" value="0"></progress>
+        <div class="msg" id="imageMsg"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>ギャラリー <span class="meta" id="galleryCount"></span></h2>
+      <p class="meta">M5StickVで撮った写真・アップロードした写真の保存履歴です（フラッシュ保存、最大20枚）。いっぱいになったら不要なものを削除してください。</p>
+      <div class="gallery-grid" id="galleryGrid"></div>
+      <p class="meta" id="galleryEmpty">まだ保存された写真はありません</p>
+    </div>
+
+    <div class="card">
+      <h2>Put TEXT for print</h2>
+      <textarea id="textInput" placeholder="Put TEXT in English only for printing out"></textarea>
+      <button class="primary full" id="printTextBtn" style="margin-top:10px">Print TEXT</button>
+      <div class="msg" id="textMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>QRコードを印刷</h2>
+      <p class="meta">URLなどのテキストをQRコードに変換してプリントします（変換はプリンター本体が行います）。</p>
+      <input type="text" id="qrInput" placeholder="https://example.com">
+      <button class="primary full" id="printQrBtn" style="margin-top:10px">QRコードを印刷</button>
+      <div class="msg" id="qrMsg"></div>
+    </div>
+  </div>
+
+  <div class="tab-content hidden" id="tabSettings">
+    <div class="card">
+      <h2>デフォルト: 明るさ・コントラスト</h2>
+      <p class="meta">M5StickVカメラ・写真アップロードの両方に使われる初期値です。</p>
+      <label>明るさ <span id="defaultBrightnessVal">0</span></label>
+      <input type="range" id="defaultBrightness" min="-100" max="100" value="0">
+      <label>コントラスト <span id="defaultContrastVal">0</span></label>
+      <input type="range" id="defaultContrast" min="-100" max="100" value="0">
+      <p class="meta">M5StickVカメラは次に撮影される写真から反映されます（表示中の写真には反映されません）。
+      写真アップロードは次に選択する写真の初期値として使われます（選択後は「画像を印刷」で個別に調整できます）。</p>
+    </div>
+
+    <div class="card">
+      <h2>M5StickV印刷モード</h2>
       <div class="radio-line">
-        <input type="checkbox" id="invert">
-        <label for="invert" style="margin:0;color:var(--text)">反転（白黒逆）</label>
+        <input type="radio" name="camMode" id="camModeAuto" value="auto">
+        <label for="camModeAuto" style="margin:0;color:var(--text)">事後閲覧方式（自動印刷→あとで確認）</label>
       </div>
-      <p class="meta" id="imageMeta"></p>
-      <button class="primary full" id="printImageBtn" style="margin-top:8px">この画像を印刷</button>
-      <progress id="imageProgress" max="100" value="0"></progress>
-      <div class="msg" id="imageMsg"></div>
+      <div class="radio-line">
+        <input type="radio" name="camMode" id="camModePreview" value="preview">
+        <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷）</label>
+      </div>
+      <p class="meta">ウェブ上に表示された後に印刷ボタンを押すか、ATOMのボタンを押して印刷。</p>
     </div>
-  </div>
 
-  <div class="card">
-    <h2>M5StickVカメラ</h2>
-    <p class="meta">M5StickVをシリアル直結すると、撮った写真をここに表示できます。</p>
-    <div class="radio-line">
-      <input type="radio" name="camMode" id="camModeAuto" value="auto">
-      <label for="camModeAuto" style="margin:0;color:var(--text)">事後閲覧方式（自動印刷→あとで確認）</label>
+    <div class="card">
+      <h2>Wi-Fi設定</h2>
+      <p class="meta">接続先を変更する場合に使う。保存すると新しいネットワークへの接続を試みる。
+      失敗した場合は設定用のAPモードに戻るので、本機に再度アクセスして設定し直せる。</p>
+      <label>SSID</label>
+      <input type="text" id="settingsSsid" placeholder="ネットワーク名">
+      <label>パスワード</label>
+      <input type="password" id="settingsWifiPass" placeholder="Wi-Fiパスワード">
+      <button class="primary full" id="settingsWifiSaveBtn" style="margin-top:12px">保存</button>
+      <div class="msg" id="settingsWifiMsg"></div>
+      <p class="meta">接続後は同じWi-Fi内の端末から <b>http://m5web.local</b> にアクセスしてください。</p>
     </div>
-    <div class="radio-line">
-      <input type="radio" name="camMode" id="camModePreview" value="preview">
-      <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷）</label>
-    </div>
-    <label>初期設定: 明るさ <span id="camBrightnessVal">0</span></label>
-    <input type="range" id="camBrightness" min="-100" max="100" value="0">
-    <label>初期設定: コントラスト <span id="camContrastVal">0</span></label>
-    <input type="range" id="camContrast" min="-100" max="100" value="0">
-    <p class="meta">次に撮影される写真から反映されます（表示中の写真には反映されません）。</p>
-    <div class="preview-wrap hidden" id="camPreviewWrap">
-      <canvas id="camPreviewCanvas"></canvas>
-    </div>
-    <p class="detect-label hidden" id="camLabel"></p>
-    <p class="meta" id="camMeta">まだ写真がありません</p>
-    <div class="btn-row hidden" id="camActions">
-      <button class="primary" id="camPrintBtn">印刷</button>
-      <button class="secondary hidden" id="camDiscardBtn">破棄</button>
-    </div>
-    <div class="msg" id="camMsg"></div>
-  </div>
-
-  <div class="card">
-    <h2>ギャラリー <span class="meta" id="galleryCount"></span></h2>
-    <p class="meta">M5StickVで撮った写真・アップロードした写真の保存履歴です（フラッシュ保存、最大20枚）。いっぱいになったら不要なものを削除してください。</p>
-    <div class="gallery-grid" id="galleryGrid"></div>
-    <p class="meta" id="galleryEmpty">まだ保存された写真はありません</p>
-  </div>
-
-  <div class="card">
-    <h2>Put TEXT for print</h2>
-    <textarea id="textInput" placeholder="Put TEXT in English only for printing out"></textarea>
-    <button class="primary full" id="printTextBtn" style="margin-top:10px">Print TEXT</button>
-    <div class="msg" id="textMsg"></div>
-  </div>
-
-  <div class="card">
-    <h2>QRコードを印刷</h2>
-    <p class="meta">URLなどのテキストをQRコードに変換してプリントします（変換はプリンター本体が行います）。</p>
-    <input type="text" id="qrInput" placeholder="https://example.com">
-    <button class="primary full" id="printQrBtn" style="margin-top:10px">QRコードを印刷</button>
-    <div class="msg" id="qrMsg"></div>
   </div>
 
   <footer>m5web · M5Stack ATOM Printer</footer>
@@ -230,7 +271,22 @@ function showMsg(el, text, kind) {
   el.className = "msg show " + kind;
 }
 
+// ---------- tabs ----------
+
+const TAB_CONTENT_ID = { print: "tabPrint", settings: "tabSettings" };
+
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".tab-content").forEach((c) => c.classList.add("hidden"));
+    btn.classList.add("active");
+    $(TAB_CONTENT_ID[btn.dataset.tab]).classList.remove("hidden");
+  });
+});
+
 // ---------- status / wifi ----------
+
+let settingsSsidPrefilled = false;
 
 async function refreshStatus() {
   try {
@@ -246,6 +302,10 @@ async function refreshStatus() {
       text.textContent = "Wi-Fi接続中: " + s.ssid;
       ipBadge.textContent = s.ip;
       $("wifiCard").classList.add("hidden");
+      if (!settingsSsidPrefilled && s.ssid) {
+        settingsSsidPrefilled = true;
+        $("settingsSsid").value = s.ssid;
+      }
     } else if (s.mode === "ap") {
       dot.className = "dot warn";
       text.textContent = "設定モード (AP: " + s.apSsid + ")";
@@ -291,34 +351,51 @@ $("manualSsidToggle").addEventListener("change", (e) => {
   $("wifiSelect").classList.toggle("hidden", e.target.checked);
 });
 
-$("wifiConnectBtn").addEventListener("click", async () => {
-  const manual = $("manualSsidToggle").checked;
-  const ssid = manual ? $("manualSsid").value.trim() : $("wifiSelect").value;
-  const pass = $("wifiPass").value;
-  const msg = $("wifiMsg");
+// Shared by the AP-mode setup card's connect button and the Settings tab's
+// save button — both just POST new credentials to the same endpoint;
+// only the button/message elements and the copy differ.
+async function doWifiConnect(ssid, password, btnEl, msgEl, successText, offlineText) {
   if (!ssid) {
-    showMsg(msg, "SSIDを入力してください", "err");
+    showMsg(msgEl, "SSIDを入力してください", "err");
     return;
   }
-  $("wifiConnectBtn").disabled = true;
-  showMsg(msg, "接続中…", "info");
+  btnEl.disabled = true;
+  showMsg(msgEl, "接続中…", "info");
   try {
     const r = await fetch("/api/wifi", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "ssid=" + encodeURIComponent(ssid) + "&password=" + encodeURIComponent(pass),
+      body: "ssid=" + encodeURIComponent(ssid) + "&password=" + encodeURIComponent(password),
     });
     const body = await r.text();
     if (r.ok) {
-      showMsg(msg, "接続成功。iPhoneのWi-Fiを切り替えて http://m5web.local を開いてください。", "ok");
+      showMsg(msgEl, successText, "ok");
     } else {
-      showMsg(msg, "接続失敗: " + body, "err");
+      showMsg(msgEl, "接続失敗: " + body, "err");
     }
   } catch (e) {
-    showMsg(msg, "本機のAPが終了したため通信できません。iPhoneのWi-Fiを確認してください。", "info");
+    showMsg(msgEl, offlineText, "info");
   } finally {
-    $("wifiConnectBtn").disabled = false;
+    btnEl.disabled = false;
   }
+}
+
+$("wifiConnectBtn").addEventListener("click", () => {
+  const manual = $("manualSsidToggle").checked;
+  const ssid = manual ? $("manualSsid").value.trim() : $("wifiSelect").value;
+  doWifiConnect(
+    ssid, $("wifiPass").value, $("wifiConnectBtn"), $("wifiMsg"),
+    "接続成功。iPhoneのWi-Fiを切り替えて http://m5web.local を開いてください。",
+    "本機のAPが終了したため通信できません。iPhoneのWi-Fiを確認してください。"
+  );
+});
+
+$("settingsWifiSaveBtn").addEventListener("click", () => {
+  doWifiConnect(
+    $("settingsSsid").value.trim(), $("settingsWifiPass").value, $("settingsWifiSaveBtn"), $("settingsWifiMsg"),
+    "保存しました。ネットワークが変わった場合はiPhoneのWi-Fiを切り替えて http://m5web.local を開き直してください。",
+    "本機が接続を切り替えたため通信できません。少し待ってから http://m5web.local に再度アクセスしてください。"
+  );
 });
 
 // ---------- image pipeline ----------
@@ -335,6 +412,10 @@ $("fileInput").addEventListener("change", (e) => {
   img.onload = () => {
     sourceImg = img;
     rotation = 0;
+    // Start from the shared default (Settings tab) each time a new photo
+    // is picked; still freely adjustable for this photo afterwards.
+    $("brightness").value = $("defaultBrightness").value;
+    $("contrast").value = $("defaultContrast").value;
     $("previewWrap").classList.remove("hidden");
     $("imageControls").classList.remove("hidden");
     renderPreview();
@@ -598,7 +679,7 @@ $("printQrBtn").addEventListener("click", async () => {
 // ---------- M5StickV camera ----------
 
 let camLastSeq = -1;
-let camSettingsLoaded = false;
+let settingsLoaded = false;
 
 function unpackAndDraw(canvas, buf, w, h) {
   const bytesPerRow = w / 8;
@@ -638,12 +719,12 @@ async function refreshCameraStatus() {
     const modeEl = document.getElementById(s.mode === "preview" ? "camModePreview" : "camModeAuto");
     modeEl.checked = true;
 
-    if (!camSettingsLoaded) {
-      camSettingsLoaded = true;
-      $("camBrightness").value = s.brightness;
-      $("camContrast").value = s.contrast;
-      $("camBrightnessVal").textContent = s.brightness;
-      $("camContrastVal").textContent = s.contrast;
+    if (!settingsLoaded) {
+      settingsLoaded = true;
+      $("defaultBrightness").value = s.brightness;
+      $("defaultContrast").value = s.contrast;
+      $("defaultBrightnessVal").textContent = s.brightness;
+      $("defaultContrastVal").textContent = s.contrast;
     }
 
     if (!s.frameReady) {
@@ -687,26 +768,26 @@ document.querySelectorAll('input[name="camMode"]').forEach((el) => {
   });
 });
 
-async function saveCameraSettings() {
+async function saveDefaultAdjust() {
   try {
     await fetch("/api/camera/settings", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `brightness=${$("camBrightness").value}&contrast=${$("camContrast").value}`,
+      body: `brightness=${$("defaultBrightness").value}&contrast=${$("defaultContrast").value}`,
     });
   } catch (err) {
     /* ignore; next status poll will resync the sliders */
   }
 }
 
-$("camBrightness").addEventListener("input", () => {
-  $("camBrightnessVal").textContent = $("camBrightness").value;
+$("defaultBrightness").addEventListener("input", () => {
+  $("defaultBrightnessVal").textContent = $("defaultBrightness").value;
 });
-$("camContrast").addEventListener("input", () => {
-  $("camContrastVal").textContent = $("camContrast").value;
+$("defaultContrast").addEventListener("input", () => {
+  $("defaultContrastVal").textContent = $("defaultContrast").value;
 });
-$("camBrightness").addEventListener("change", saveCameraSettings);
-$("camContrast").addEventListener("change", saveCameraSettings);
+$("defaultBrightness").addEventListener("change", saveDefaultAdjust);
+$("defaultContrast").addEventListener("change", saveDefaultAdjust);
 
 $("camPrintBtn").addEventListener("click", async () => {
   const msg = $("camMsg");
@@ -790,6 +871,13 @@ function buildGalleryItem(entry) {
     label.className = "gallery-label";
     label.textContent = entry.label;
     item.appendChild(label);
+  }
+
+  if (entry.savedAt) {
+    const date = document.createElement("div");
+    date.className = "gallery-date";
+    date.textContent = entry.savedAt;
+    item.appendChild(date);
   }
 
   const actions = document.createElement("div");

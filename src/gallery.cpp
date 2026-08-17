@@ -4,6 +4,8 @@
 #include <Preferences.h>
 #include <stdio.h>
 
+#include "caption.h"
+#include "clock.h"
 #include "led.h"
 #include "printer.h"
 
@@ -29,6 +31,9 @@ String pathFor(uint16_t id, uint16_t height) {
 // filename — arbitrary caption text doesn't fit LittleFS's filename
 // constraints cleanly, and this way an empty/absent label costs nothing.
 String labelKey(uint16_t id) { return "l" + String(id); }
+
+// Save date, same rationale/storage as labelKey() (distinct prefix, same NVS).
+String dateKey(uint16_t id) { return "d" + String(id); }
 
 // Strips a leading '/' if present — different core versions of
 // File::name() have returned paths with and without it.
@@ -115,7 +120,9 @@ void endSave() {
     writingFile.close();
     prefs.putUInt("nextId", writingId + 1);
     if (writingLabel.length() > 0) prefs.putString(labelKey(writingId).c_str(), writingLabel);
-    Serial.printf("[gallery] saved #%u label=\"%s\"\n", writingId, writingLabel.c_str());
+    String date = Clock::nowDate();  // "" if the clock hasn't synced yet — left unset in that case
+    if (date.length() > 0) prefs.putString(dateKey(writingId).c_str(), date);
+    Serial.printf("[gallery] saved #%u label=\"%s\" date=\"%s\"\n", writingId, writingLabel.c_str(), date.c_str());
     writingActive = false;
     Led::setGalleryNonEmpty(true);  // this save just succeeded, so the gallery is non-empty
 }
@@ -153,6 +160,7 @@ size_t list(Entry *out, size_t maxCount) {
                     found[count].height = (uint16_t)height;
                     found[count].bytes = f.size();
                     prefs.getString(labelKey((uint16_t)id).c_str(), "").toCharArray(found[count].label, sizeof(found[count].label));
+                    prefs.getString(dateKey((uint16_t)id).c_str(), "").toCharArray(found[count].savedAt, sizeof(found[count].savedAt));
                     count++;
                 }
             }
@@ -185,6 +193,7 @@ bool remove(uint16_t id) {
     bool ok = LittleFS.remove(path);
     if (ok) {
         prefs.remove(labelKey(id).c_str());
+        prefs.remove(dateKey(id).c_str());
         Led::setGalleryNonEmpty(countEntries() > 0);
     }
     return ok;
@@ -197,8 +206,18 @@ bool print(uint16_t id) {
     File f = LittleFS.open(path, "r");
     if (!f) return false;
 
+    // The caption (saved label + fresh print-time timestamp) is appended
+    // as extra rows after the image, not overlaid onto its own last rows
+    // — the file on disk (also served raw to the web UI via
+    // /api/gallery/frame) stays untouched, and a caption never covers
+    // real photo content.
+    String label = prefs.getString(labelKey(id).c_str(), "");
+    String caption = Caption::combine(label.c_str(), Clock::nowHHMM().c_str());
+    uint16_t bandHeight = (caption.length() > 0 && height > Caption::kBandHeight) ? Caption::kBandHeight : 0;
+
     Printer::reset();
-    Printer::beginRaster(Printer::kPrintWidthDots, height);
+    Printer::beginRaster(Printer::kPrintWidthDots, height + bandHeight);
+
     uint8_t chunk[256];
     while (f.available()) {
         int n = f.read(chunk, sizeof(chunk));  // Stream::read() returns int; -1/0 = stop
@@ -206,6 +225,13 @@ bool print(uint16_t id) {
         Printer::feedRasterChunk(chunk, (size_t)n);
     }
     f.close();
+
+    if (bandHeight > 0) {
+        uint8_t band[Printer::kPrintWidthBytes * Caption::kBandHeight];
+        Caption::stamp(band, Printer::kPrintWidthBytes, caption.c_str());
+        Printer::feedRasterChunk(band, sizeof(band));
+    }
+
     Printer::endRaster();
     return true;
 }

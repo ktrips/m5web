@@ -21,11 +21,15 @@ constexpr size_t kMaxEntries = 20;
 // Matches CameraLink::kMaxLabelLen; phone uploads never set a label.
 constexpr size_t kMaxLabelLen = 31;
 
+// "MM/DD"; fixed width, matches Clock::nowDate()'s format.
+constexpr size_t kDateLen = 5;
+
 struct Entry {
     uint16_t id;
     uint16_t height;
     size_t bytes;
     char label[kMaxLabelLen + 1];  // "" if none
+    char savedAt[kDateLen + 1];    // "" if the clock hadn't synced yet when this was saved
 };
 
 void begin();
