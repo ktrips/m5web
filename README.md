@@ -282,6 +282,54 @@ ATOM Lite本体にも内蔵RGB LED（G27, SK6812）があり、M5StickV側のLED
   `live face detect: N found`もログに出るので、検出自体が動いているか確認できる）。
   誤検出/未検出の多さは`threshold`/`scale_factor`でも調整する。
 
+## M5Paper連携
+
+M5StickVカメラの写真を確認・印刷する機能（前述の[M5StickVカメラ連携](#m5stickvカメラ連携)）を、
+iPhoneのブラウザではなくM5Paperの画面から使えるようにするスケッチ（[`m5paper/m5paper.ino`](m5paper/m5paper.ino)）。
+ATOM Lite側の追加設定・改造は不要——m5webページの「M5StickVカメラ」カードが使っているのと
+まったく同じHTTP API（`/api/camera/status`・`/api/camera/frame`・`/api/camera/print`・
+`/api/camera/discard`）を、M5PaperがそれぞれWi-Fi経由で叩くだけの構成になっている。M5StickVと
+違いM5Paper自体にWi-Fiがあるため、M5StickVのような直結UARTは使わずWi-Fi接続で完結する。
+
+**M5Paperの工場出荷標準ファームウェア（AP接続＋画像アップロード機能）を書き換えることになる**
+点に注意——1台のM5Paperで同時に2つのファームウェアは動かせないため、このスケッチを書き込むと
+標準ファームウェアは上書きされる。標準機能をまた使いたくなったら標準ファームウェアに書き戻すか、
+このスケッチ専用にもう1台M5Paperを用意すること。
+
+### 導入手順
+
+1. Arduino IDEのライブラリマネージャで **M5EPD**（M5Stack）と **ArduinoJson**（Benoit Blanchon）
+   をインストールする。
+2. [`m5paper/m5paper.ino`](m5paper/m5paper.ino) 冒頭の`WIFI_SSID`/`WIFI_PASSWORD`をATOM Liteと
+   同じWi-Fiネットワークの値に、`M5WEB_HOST`を必要なら（`.local`解決がうまくいかない場合）ATOM
+   LiteのIPアドレスに書き換える。
+3. ボードに **M5Paper** を選択して書き込む。
+
+### 使い方
+
+起動するとWi-Fiに接続し、3秒おきにATOM Lite側の状態をポーリングする。M5StickVカメラの写真が
+あれば画面に表示し、以下のボタンをタップして操作する。
+
+- **印刷 / もう一度印刷**: プレビュー確認方式で確認待ちならそれを確定、そうでなければ再印刷
+  （`/api/camera/print`と同じ）。
+- **破棄**: プレビュー確認方式で確認待ちの写真がある時だけ表示（`/api/camera/discard`と同じ）。
+
+### 既知の注意点
+
+このスケッチは実機での動作確認ができていない（M5EPD公式ドキュメント・サンプルを根拠に実装）。
+特に以下は要確認:
+
+- **タッチ座標と画面回転のズレ**: キャンバスは90°回転（縦持ち540×960）で描画しているが、
+  `M5.TP.readFinger()`が回転前（横960×540）の生座標を返すライブラリバージョンだと、
+  ボタンのタップ判定がズレる。ボタンが反応しない/違う場所で反応する場合はまずここを疑うこと
+  （`m5paper.ino`のコメントに詳しい対処法を書いてある）。
+- キャンバスの色の向き（0=白・15=黒と仮定している4bit グレースケール値）。
+- タッチAPI自体（`tp_finger_t`・`M5.TP.readFinger()`）が想定と違う場合は、M5EPDライブラリ付属の
+  `BasicTouch.ino`サンプルを参照して合わせること。
+- E-Ink更新モード（`UPDATE_MODE_GC16`など）は`M5EPD.h`に定義がある前提。このアプリは
+  ポーリングやボタン操作のたびにしか再描画しない（連続更新しない）ため、フル品質更新の
+  ちらつき・残像コストは気にしていない。
+
 ## 制限事項
 
 - 印刷幅は58mmヘッド固定の384dot。
@@ -314,6 +362,8 @@ arduino/m5web/
 maixpy/
   m5web_capture.py    M5StickV側スクリプト（撮影→シャッター音→リサイズ→UART送信）
   shutter.wav          シャッター音（16kHz/mono/16bit, 180ms、m5web_capture.pyが再生）
+m5paper/
+  m5paper.ino          M5Paper用スケッチ（詳細は[M5Paper連携](#m5paper連携)）
 ```
 
 ## API
