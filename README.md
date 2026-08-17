@@ -282,53 +282,59 @@ ATOM Lite本体にも内蔵RGB LED（G27, SK6812）があり、M5StickV側のLED
   `live face detect: N found`もログに出るので、検出自体が動いているか確認できる）。
   誤検出/未検出の多さは`threshold`/`scale_factor`でも調整する。
 
-## M5Paper連携
+## M5PaperColor連携
 
 M5StickVカメラの写真を確認・印刷する機能（前述の[M5StickVカメラ連携](#m5stickvカメラ連携)）を、
-iPhoneのブラウザではなくM5Paperの画面から使えるようにするスケッチ（[`m5paper/m5paper.ino`](m5paper/m5paper.ino)）。
-ATOM Lite側の追加設定・改造は不要——m5webページの「M5StickVカメラ」カードが使っているのと
-まったく同じHTTP API（`/api/camera/status`・`/api/camera/frame`・`/api/camera/print`・
-`/api/camera/discard`）を、M5PaperがそれぞれWi-Fi経由で叩くだけの構成になっている。M5StickVと
-違いM5Paper自体にWi-Fiがあるため、M5StickVのような直結UARTは使わずWi-Fi接続で完結する。
+iPhoneのブラウザではなくM5PaperColorの画面から使えるようにするスケッチ
+（[`arduino/m5paper/m5paper.ino`](arduino/m5paper/m5paper.ino)）。ATOM Lite側の追加設定・改造は
+不要——m5webページの「M5StickVカメラ」カードが使っているのとまったく同じHTTP API
+（`/api/camera/status`・`/api/camera/frame`・`/api/camera/print`・`/api/camera/discard`）を、
+M5PaperColorがそれぞれWi-Fi経由で叩くだけの構成になっている。M5StickVと違いM5PaperColor自体に
+Wi-Fiがあるため、M5StickVのような直結UARTは使わずWi-Fi接続で完結する。
 
-**M5Paperの工場出荷標準ファームウェア（AP接続＋画像アップロード機能）を書き換えることになる**
-点に注意——1台のM5Paperで同時に2つのファームウェアは動かせないため、このスケッチを書き込むと
-標準ファームウェアは上書きされる。標準機能をまた使いたくなったら標準ファームウェアに書き戻すか、
-このスケッチ専用にもう1台M5Paperを用意すること。
+対象機種はM5PaperColor（ESP32-S3、約4インチのE Ink Spectra 6カラーパネル、物理ボタン3個
+BtnA/BtnB/BtnC）。従来のモノクロM5Paper（M5EPDライブラリ使用）とは別機種・別ライブラリ構成
+（M5Unified/M5GFX）なので注意——このリポジトリのスケッチはM5PaperColor専用。
+
+**M5PaperColorの工場出荷標準ファームウェア（AP接続＋画像アップロード機能）を書き換えることになる**
+点に注意——1台で同時に2つのファームウェアは動かせないため、このスケッチを書き込むと標準
+ファームウェアは上書きされる。標準機能をまた使いたくなったら標準ファームウェアに書き戻すか、
+このスケッチ専用にもう1台用意すること。
 
 ### 導入手順
 
-1. Arduino IDEのライブラリマネージャで **M5EPD**（M5Stack）と **ArduinoJson**（Benoit Blanchon）
-   をインストールする。
-2. [`m5paper/m5paper.ino`](m5paper/m5paper.ino) 冒頭の`WIFI_SSID`/`WIFI_PASSWORD`をATOM Liteと
-   同じWi-Fiネットワークの値に、`M5WEB_HOST`を必要なら（`.local`解決がうまくいかない場合）ATOM
-   LiteのIPアドレスに書き換える。
-3. ボードに **M5Paper** を選択して書き込む。
+1. Arduino IDEのライブラリマネージャで **M5Unified**（M5Stack）・**M5GFX**（M5Stack）・
+   **ArduinoJson**（Benoit Blanchon）の3つをインストールする。
+2. [`arduino/m5paper/m5paper.ino`](arduino/m5paper/m5paper.ino) 冒頭の`WIFI_SSID`/`WIFI_PASSWORD`を
+   ATOM Liteと同じWi-Fiネットワークの値に、`M5WEB_HOST`を必要なら（`.local`解決がうまくいかない
+   場合）ATOM LiteのIPアドレスに書き換える。
+3. ボードに **M5PaperColor** を選択して書き込む。
 
 ### 使い方
 
-このM5Paper機はタッチパネルが無いため、画面下の3つの物理ボタン（左=BtnL・中央=BtnP・
-右=BtnR）で操作する。起動するとWi-Fiに接続し、3秒おきにATOM Lite側の状態をポーリングする。
-M5StickVカメラの写真があれば画面に表示され、画面下部にその時点で有効なボタンの案内が出る。
+タッチパネルは無いため、画面下の3つの物理ボタン（左=BtnA・中央=BtnB・右=BtnC）で操作する。
+起動するとWi-Fiに接続し、3秒おきにATOM Lite側の状態をポーリングする。M5StickVカメラの写真が
+あれば画面に表示され、画面下部にその時点で有効なボタンの案内が出る。
 
-- **右ボタン（BtnR）＝印刷 / もう一度印刷**: プレビュー確認方式で確認待ちならそれを確定、
+- **右ボタン（BtnC）＝印刷 / もう一度印刷**: プレビュー確認方式で確認待ちならそれを確定、
   そうでなければ再印刷（`/api/camera/print`と同じ）。
-- **左ボタン（BtnL）＝破棄**: プレビュー確認方式で確認待ちの写真がある時だけ有効
+- **左ボタン（BtnA）＝破棄**: プレビュー確認方式で確認待ちの写真がある時だけ有効
   （`/api/camera/discard`と同じ）。
-- **中央ボタン（BtnP）＝更新**: 次のポーリング（最大3秒後）を待たずにすぐ状態を確認する。
+- **中央ボタン（BtnB）＝更新**: 次のポーリング（最大3秒後）を待たずにすぐ状態を確認する。
 
 ### 既知の注意点
 
-このスケッチは実機での動作確認ができていない（M5EPD公式ドキュメント・サンプルを根拠に実装）。
-特に以下は要確認:
+このスケッチは実機での動作確認ができていない（M5Stack公式ドキュメント
+docs.m5stack.com/en/arduino/papercolor/program・.../buttonを根拠に実装）。特に以下は要確認:
 
-- `M5.BtnL`/`M5.BtnP`/`M5.BtnR`と`M5.update()`/`.wasPressed()`という標準的なM5Stack
-  Buttonクラスの構成を前提にしている。ライブラリのバージョンによってボタンオブジェクトの
-  名前が違う場合は、M5EPDライブラリ付属のサンプル（`Menu.ino`など）で実際のAPIを確認すること。
-- キャンバスの色の向き（0=白・15=黒と仮定している4bit グレースケール値）。
-- E-Ink更新モード（`UPDATE_MODE_GC16`など）は`M5EPD.h`に定義がある前提。このアプリは
-  ポーリングやボタン操作のたびにしか再描画しない（連続更新しない）ため、フル品質更新の
-  ちらつき・残像コストは気にしていない。
+- **画面解像度と向き**: 600×400（横向き）と仮定しているが、情報源によって
+  「400×600」「600×400」と表記が揺れており向きが確定できていない。画像がレターボックス状に
+  変な向きで表示される場合はここを疑い、`SCREEN_W`/`SCREEN_H`を入れ替えること。
+- 6色（Spectra）パネルだが、印刷画像自体がすでに1bpp白黒ビットマップなのでWHITE/BLACKの
+  2色しか使っていない。
+- `epd_mode_t::epd_quality`（`setup()`で一度だけ設定）は公式サンプル通りのフル品質モード。
+  このアプリはポーリングやボタン操作のたびにしか再描画しない（連続更新しない）ため、
+  フル品質更新の速度コストは気にしていない。
 
 ## 制限事項
 
@@ -362,8 +368,8 @@ arduino/m5web/
 maixpy/
   m5web_capture.py    M5StickV側スクリプト（撮影→シャッター音→リサイズ→UART送信）
   shutter.wav          シャッター音（16kHz/mono/16bit, 180ms、m5web_capture.pyが再生）
-m5paper/
-  m5paper.ino          M5Paper用スケッチ（詳細は[M5Paper連携](#m5paper連携)）
+arduino/m5paper/
+  m5paper.ino          M5PaperColor用スケッチ（詳細は[M5PaperColor連携](#m5papercolor連携)）
 ```
 
 ## API
