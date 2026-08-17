@@ -26,13 +26,14 @@ String nowHHMM() {
     return String(buf);
 }
 
-String nowDate() {
+String nowDateTime() {
     if (!isSynced()) return "";
     time_t now = time(nullptr);
     struct tm timeinfo;
     localtime_r(&now, &timeinfo);
-    char buf[6];
-    snprintf(buf, sizeof(buf), "%02d/%02d", timeinfo.tm_mon + 1, timeinfo.tm_mday);
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%02d/%02d %02d:%02d", timeinfo.tm_mon + 1, timeinfo.tm_mday, timeinfo.tm_hour,
+             timeinfo.tm_min);
     return String(buf);
 }
 

@@ -120,7 +120,7 @@ void endSave() {
     writingFile.close();
     prefs.putUInt("nextId", writingId + 1);
     if (writingLabel.length() > 0) prefs.putString(labelKey(writingId).c_str(), writingLabel);
-    String date = Clock::nowDate();  // "" if the clock hasn't synced yet — left unset in that case
+    String date = Clock::nowDateTime();  // "" if the clock hasn't synced yet — left unset in that case
     if (date.length() > 0) prefs.putString(dateKey(writingId).c_str(), date);
     Serial.printf("[gallery] saved #%u label=\"%s\" date=\"%s\"\n", writingId, writingLabel.c_str(), date.c_str());
     writingActive = false;

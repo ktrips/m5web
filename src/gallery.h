@@ -21,8 +21,8 @@ constexpr size_t kMaxEntries = 20;
 // Matches CameraLink::kMaxLabelLen; phone uploads never set a label.
 constexpr size_t kMaxLabelLen = 31;
 
-// "MM/DD"; fixed width, matches Clock::nowDate()'s format.
-constexpr size_t kDateLen = 5;
+// "MM/DD HH:MM"; fixed width, matches Clock::nowDateTime()'s format.
+constexpr size_t kDateLen = 11;
 
 struct Entry {
     uint16_t id;

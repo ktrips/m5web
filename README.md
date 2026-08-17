@@ -284,13 +284,13 @@ ATOM Lite本体にも内蔵RGB LED（G27, SK6812）があり、M5StickV側のLED
 
 ## M5PaperColor連携
 
-M5StickVカメラの写真を確認・印刷する機能（前述の[M5StickVカメラ連携](#m5stickvカメラ連携)）を、
-iPhoneのブラウザではなくM5PaperColorの画面から使えるようにするスケッチ
-（[`arduino/m5paper/m5paper.ino`](arduino/m5paper/m5paper.ino)）。ATOM Lite側の追加設定・改造は
-不要——m5webページの「M5StickVカメラ」カードが使っているのとまったく同じHTTP API
-（`/api/camera/status`・`/api/camera/frame`・`/api/camera/print`・`/api/camera/discard`）を、
-M5PaperColorがそれぞれWi-Fi経由で叩くだけの構成になっている。M5StickVと違いM5PaperColor自体に
-Wi-Fiがあるため、M5StickVのような直結UARTは使わずWi-Fi接続で完結する。
+m5webのギャラリー（前述「プリントタブ」の「ギャラリー」カード——M5StickVカメラで撮った写真・
+アップロードした写真の両方を含む保存履歴）を、iPhoneのブラウザではなくM5PaperColorの画面から
+確認・再印刷できるようにするスケッチ（[`arduino/m5paper/m5paper.ino`](arduino/m5paper/m5paper.ino)）。
+ATOM Lite側の追加設定・改造は不要——m5webページの「ギャラリー」カードが使っているのとまったく同じHTTP API
+（`/api/gallery`・`/api/gallery/frame`・`/api/gallery/print`）を、M5PaperColorがそれぞれWi-Fi
+経由で叩くだけの構成になっている。M5StickVと違いM5PaperColor自体にWi-Fiがあるため、M5StickVの
+ような直結UARTは使わずWi-Fi接続で完結する。
 
 対象機種はM5PaperColor（ESP32-S3、約4インチのE Ink Spectra 6カラーパネル、物理ボタン3個
 BtnA/BtnB/BtnC）。従来のモノクロM5Paper（M5EPDライブラリ使用）とは別機種・別ライブラリ構成
@@ -304,23 +304,49 @@ BtnA/BtnB/BtnC）。従来のモノクロM5Paper（M5EPDライブラリ使用）
 ### 導入手順
 
 1. Arduino IDEのライブラリマネージャで **M5Unified**（M5Stack）・**M5GFX**（M5Stack）・
-   **ArduinoJson**（Benoit Blanchon）の3つをインストールする。
-2. [`arduino/m5paper/m5paper.ino`](arduino/m5paper/m5paper.ino) 冒頭の`WIFI_SSID`/`WIFI_PASSWORD`を
-   ATOM Liteと同じWi-Fiネットワークの値に、`M5WEB_HOST`を必要なら（`.local`解決がうまくいかない
-   場合）ATOM LiteのIPアドレスに書き換える。
+   **ArduinoJson**（Benoit Blanchon）の3つをインストールする（DNSServer/WebServer/Preferencesは
+   ESP32 Arduinoコア同梱のため別途インストール不要）。
+2. [`arduino/m5paper/m5paper.ino`](arduino/m5paper/m5paper.ino) 冒頭の`M5WEB_HOST`を必要なら
+   （`.local`解決がうまくいかない場合）ATOM LiteのIPアドレスに書き換える。**Wi-FiのSSID・
+   パスワードはソースコードに書く必要はない**（後述の初回セットアップで設定する）。
 3. ボードに **M5PaperColor** を選択して書き込む。
+
+### 初回セットアップ（Wi-Fi）
+
+ATOM Lite側と同様、Wi-Fi接続情報はソースコードに持たせず、初回起動時にその場で設定する
+（`src/wifi_manager.cpp`と同じ方式）。
+
+1. 書き込み直後はWi-Fi設定が無いため、本機が `m5paper-setup-XXXX` という名前のオープンAPを
+   立ち上げる。画面に接続先AP名（パスワード不要と明記）と設定用URL（`http://192.168.4.1`）が
+   表示される。
+2. iPhoneのWi-Fi設定からこのAPに接続する。
+3. ブラウザで `http://192.168.4.1` を開く（キャプティブポータルとして自動的に開くこともある）。
+4. 表示されたページでATOM Liteと同じWi-Fiネットワークを選び（またはSSIDを手入力し）、
+   パスワードを入力して「接続する」を押す。本機の画面にも「接続中...」→成功なら
+   「接続完了」（SSID・IP・電波強度）、失敗なら「接続失敗」（設定画面に戻る）が表示される。
+5. 接続に成功すると本機のAPは終了し、指定したWi-Fiにクライアントとして参加する。設定は
+   NVSに保存され、次回起動時からは自動的にそのネットワークへ接続する（接続完了時に
+   SSID・IP・電波強度を画面に表示）。
+
+保存した接続先に**繋がらなくなった場合は自動的に**このAP設定モードへ戻る（画面に「接続できません
+→設定モードに入ります」と表示されてから切り替わる）。繋がっている別のネットワークへ
+切り替えたいだけの場合の明示的なリセット手段は現状無い（`m5paper.ino`冒頭のコメント参照）。
 
 ### 使い方
 
 タッチパネルは無いため、画面下の3つの物理ボタン（左=BtnA・中央=BtnB・右=BtnC）で操作する。
-起動するとWi-Fiに接続し、3秒おきにATOM Lite側の状態をポーリングする。M5StickVカメラの写真が
-あれば画面に表示され、画面下部にその時点で有効なボタンの案内が出る。
+Wi-Fi接続後は3秒おきにATOM Lite側のギャラリー一覧をポーリングする。ギャラリーが空の場合は
+「M5StickVカメラで写真を撮るか、ウェブから画像をアップしてください」と案内が表示される。
 
-- **右ボタン（BtnC）＝印刷 / もう一度印刷**: プレビュー確認方式で確認待ちならそれを確定、
-  そうでなければ再印刷（`/api/camera/print`と同じ）。
-- **左ボタン（BtnA）＝破棄**: プレビュー確認方式で確認待ちの写真がある時だけ有効
-  （`/api/camera/discard`と同じ）。
-- **中央ボタン（BtnB）＝更新**: 次のポーリング（最大3秒後）を待たずにすぐ状態を確認する。
+写真があれば新しい順（m5webページのギャラリーと同じ並び）に1枚ずつ表示され、画面上部に
+「2/5」のような位置・写真ID・検出ラベル（あれば）・保存日時が、下部にボタン案内が出る。
+
+- **左ボタン（BtnA）＝前へ**: 一覧を新しい方向へ1件戻る（末尾では最古の1件から最新へ循環）。
+- **中央ボタン（BtnB）＝次へ**: 一覧を古い方向へ1件進む（同様に循環）。
+- **右ボタン（BtnC）＝印刷**: 現在表示中の写真を再印刷する（`/api/gallery/print`と同じ）。
+
+一覧はポーリングのたびに更新され、選択中の写真は（新しい写真が増えて順番がずれても）
+IDで追跡され続ける。フラッシュ本体からの削除は現状m5webページ側でのみ行える。
 
 ### 既知の注意点
 
@@ -335,6 +361,13 @@ docs.m5stack.com/en/arduino/papercolor/program・.../buttonを根拠に実装）
 - `epd_mode_t::epd_quality`（`setup()`で一度だけ設定）は公式サンプル通りのフル品質モード。
   このアプリはポーリングやボタン操作のたびにしか再描画しない（連続更新しない）ため、
   フル品質更新の速度コストは気にしていない。
+- **設定用AP（`m5paper-setup-XXXX`）がiPhoneのWi-Fi一覧に出てこない場合**: シリアルモニタで
+  `[wifi] AP setup mode: softAP()=...` の行を確認すること。`FAILED`と出ていれば
+  `WiFi.softAP()`自体が失敗している（アンテナ・電源まわりの問題の可能性）。`ok`なのに見えない
+  場合はESP32のAPが実際にはブロードキャストされていないという既知の事象の可能性があり、
+  対策として`runSetupAP()`内で`WiFi.mode(WIFI_OFF)`→`delay(100)`→`WiFi.mode(WIFI_AP_STA)`の
+  クリーンな遷移と`WiFi.setSleep(false)`を入れてある。それでも改善しない場合は本体を再起動して
+  再試行すること。
 
 ## 制限事項
 

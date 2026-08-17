@@ -22,7 +22,7 @@ bool isSynced();
 // Current local time as "HH:MM", or "" if not yet synced.
 String nowHHMM();
 
-// Current local date as "MM/DD", or "" if not yet synced.
-String nowDate();
+// Current local date+time as "MM/DD HH:MM", or "" if not yet synced.
+String nowDateTime();
 
 }  // namespace Clock
