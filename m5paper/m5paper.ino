@@ -2,13 +2,16 @@
 // preview/print workflow.
 //
 // Lets you review the M5StickV's pending camera frame and print/discard it
-// from M5Paper's e-ink screen + touchscreen, instead of (or alongside) the
-// phone browser's "M5StickVカメラ" card on the m5web page. Talks to the
+// from M5Paper's e-ink screen + physical buttons, instead of (or alongside)
+// the phone browser's "M5StickVカメラ" card on the m5web page. Talks to the
 // same ATOM Lite HTTP API over WiFi — M5Paper has its own WiFi radio
 // (unlike the M5StickV, which has none and so uses a direct UART link
 // instead; see ../src/camera_link.* for that path). No changes to the
 // ATOM Lite firmware are needed: this is purely a new client of the
 // already-existing /api/camera/* endpoints (see ../README.md's API table).
+//
+// Uses the three physical buttons (BtnL/BtnP/BtnR) rather than touch —
+// this M5Paper unit has no touchscreen.
 //
 // IMPORTANT: this REPLACES whatever firmware is currently on the M5Paper
 // when flashed — including the factory-stock "AP mode + image upload"
@@ -23,21 +26,17 @@
 // NOTE: written against M5EPD's documented API but not tested on real
 // M5Paper hardware. Likely spots to double-check/adjust if something's
 // off:
-//   - Touch coordinates vs. display rotation: the canvas is drawn rotated
-//     90° (portrait, 540x960 — see setup()'s M5.EPD.SetRotation(90)), but
-//     M5.TP.readFinger() may report raw/native (960x540 landscape) panel
-//     coordinates depending on your M5EPD library version, which would
-//     make handleTouch()'s button hit-testing miss. If taps don't
-//     register where expected, that's the first thing to check — either
-//     swap/remap p.x/p.y here, or find whichever M5EPD touch-rotation
-//     call your version exposes (see M5Stack's own M5EPD BasicTouch.ino
-//     example for the touch API in general, tp_finger_t included).
+//   - M5.BtnL/BtnP/BtnR + M5.update()/.wasPressed(): the standard M5Stack
+//     Button API, assumed to exist as-is for M5Paper's three physical
+//     buttons. If they're named differently on your library version, grep
+//     M5EPD's own examples (e.g. Menu.ino) for the actual button objects.
 //   - Canvas color polarity (0=white / 15=black is assumed below — a
 //     4-bit grayscale value per M5EPD_Canvas convention).
 //   - EPD update mode constants (UPDATE_MODE_GC16 etc.) come from
 //     M5EPD.h; full-quality GC16 is used throughout since this app
-//     updates rarely (on poll changes / button taps), not continuously,
-//     so the flash/ghosting cost of a full refresh isn't a concern here.
+//     updates rarely (on poll changes / button presses), not
+//     continuously, so the flash/ghosting cost of a full refresh isn't a
+//     concern here.
 
 #include <M5EPD.h>
 #include <WiFi.h>
@@ -61,22 +60,16 @@ constexpr size_t kFrameBufMaxLen = 48 * 800;
 
 M5EPD_Canvas canvas(&M5.EPD);
 
-// ---- layout (portrait: M5Paper is 540x960 rotated 90°) ----
-constexpr int SCREEN_W = 540;
-constexpr int SCREEN_H = 960;
+// ---- layout (native landscape, no rotation — the physical buttons are
+// laid out for this orientation, so rotating the canvas would need to
+// know exactly how the buttons move with it, which isn't worth guessing
+// at when just reading fixed button GPIOs doesn't care about rotation at
+// all) ----
+constexpr int SCREEN_W = 960;
+constexpr int SCREEN_H = 540;
 constexpr int MARGIN = 20;
-constexpr int BUTTON_H = 90;
-constexpr int BUTTON_GAP = 16;
-
-struct Rect {
-    int x, y, w, h;
-};
-const Rect kPrintBtn = {MARGIN, SCREEN_H - MARGIN - BUTTON_H, SCREEN_W - MARGIN * 2, BUTTON_H};
-const Rect kDiscardBtn = {MARGIN, SCREEN_H - MARGIN - BUTTON_H * 2 - BUTTON_GAP, SCREEN_W - MARGIN * 2, BUTTON_H};
-
-bool inRect(const Rect &r, int x, int y) {
-    return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
-}
+constexpr int META_H = 30;
+constexpr int LEGEND_H = 40;
 
 // ---- state ----
 bool lastFrameReady = false;
@@ -178,13 +171,24 @@ void drawFrame(const uint8_t *buf, uint16_t srcW, uint16_t srcH, int destX, int 
     }
 }
 
-void drawButton(const Rect &r, const char *text) {
-    canvas.fillRect(r.x, r.y, r.w, r.h, 0);
-    canvas.drawRect(r.x, r.y, r.w, r.h, 15);
-    canvas.setTextSize(3);
+// Bottom legend showing what each physical button currently does — plain
+// text, not a touch target, since this unit has no touchscreen. Left-
+// aligned under where BtnL/BtnP/BtnR roughly sit (left/middle/right of
+// the bottom edge) as a visual hint, not a precise hit-box.
+void drawLegend(const char *left, const char *middle, const char *right) {
+    canvas.setTextSize(2);
     canvas.setTextColor(15);
-    int16_t tw = canvas.textWidth(text);
-    canvas.drawString(text, r.x + (r.w - tw) / 2, r.y + r.h / 2 - 12);
+    int y = SCREEN_H - LEGEND_H + 8;
+
+    if (left) canvas.drawString(left, MARGIN, y);
+    if (middle) {
+        int16_t tw = canvas.textWidth(middle);
+        canvas.drawString(middle, SCREEN_W / 2 - tw / 2, y);
+    }
+    if (right) {
+        int16_t tw = canvas.textWidth(right);
+        canvas.drawString(right, SCREEN_W - MARGIN - tw, y);
+    }
 }
 
 void render() {
@@ -194,31 +198,26 @@ void render() {
         canvas.setTextSize(3);
         canvas.setTextColor(15);
         canvas.drawString("まだ写真がありません", MARGIN, SCREEN_H / 2 - 20);
+        drawLegend(nullptr, "[P] 更新", nullptr);
         canvas.pushCanvas(0, 0, UPDATE_MODE_GC16);
         return;
     }
 
-    int imageAreaTop = MARGIN + 40;
-    int imageAreaH = kDiscardBtn.y - imageAreaTop - MARGIN;
+    int imageAreaTop = MARGIN + META_H;
+    int imageAreaH = SCREEN_H - LEGEND_H - imageAreaTop - MARGIN;
     drawFrame(frameBuf, lastWidth, lastHeight, MARGIN, imageAreaTop, SCREEN_W - MARGIN * 2, imageAreaH);
 
     canvas.setTextSize(2);
     canvas.setTextColor(15);
     String meta = String(lastWidth) + "x" + String(lastHeight) + "dot";
     if (lastLabel.length() > 0) meta += "  検出: " + lastLabel;
+    if (statusMsg.length() > 0) meta += "  " + statusMsg;
     canvas.drawString(meta, MARGIN, MARGIN);
 
     if (lastPendingPrint) {
-        drawButton(kDiscardBtn, "破棄");
-        drawButton(kPrintBtn, "印刷");
+        drawLegend("[L] 破棄", "[P] 更新", "[R] 印刷");
     } else {
-        drawButton(kPrintBtn, "もう一度印刷");
-    }
-
-    if (statusMsg.length() > 0) {
-        canvas.setTextSize(2);
-        canvas.setTextColor(15);
-        canvas.drawString(statusMsg, MARGIN, kPrintBtn.y - 36);
+        drawLegend(nullptr, "[P] 更新", "[R] もう一度印刷");
     }
 
     canvas.pushCanvas(0, 0, UPDATE_MODE_GC16);
@@ -269,28 +268,31 @@ void pollStatus() {
     }
 }
 
-void handleTouch() {
-    if (!M5.TP.avail()) return;
-    M5.TP.update();
-    tp_finger_t p = M5.TP.readFinger(0);
-    int x = p.x, y = p.y;
-
-    if (lastFrameReady && inRect(kPrintBtn, x, y)) {
+// BtnL = discard (only meaningful while pendingPrint), BtnP = force an
+// immediate poll (instead of waiting up to POLL_INTERVAL_MS), BtnR =
+// print / reprint. M5.update() must run each loop() first so
+// .wasPressed() reflects this cycle's state.
+void handleButtons() {
+    if (M5.BtnR.wasPressed() && lastFrameReady) {
         statusMsg = "印刷しています…";
         render();
         bool ok = postAction("/api/camera/print");
         syncStatus();  // pendingPrint clears once printed; pick that up before rendering
         statusMsg = ok ? "印刷しました" : "印刷に失敗しました";
         render();
-    } else if (lastPendingPrint && inRect(kDiscardBtn, x, y)) {
+    } else if (M5.BtnL.wasPressed() && lastPendingPrint) {
         statusMsg = "破棄しています…";
         render();
         bool ok = postAction("/api/camera/discard");
         syncStatus();
         statusMsg = ok ? "破棄しました" : "破棄に失敗しました";
         render();
+    } else if (M5.BtnP.wasPressed()) {
+        statusMsg = "更新しています…";
+        render();
+        statusMsg = syncStatus() ? "" : "通信エラー";
+        render();
     }
-    delay(300);  // debounce against repeated touch reads for the same tap
 }
 
 void connectWifi() {
@@ -312,7 +314,6 @@ unsigned long lastPollMs = 0;
 
 void setup() {
     M5.begin();
-    M5.EPD.SetRotation(90);
     M5.EPD.Clear(true);
     canvas.createCanvas(SCREEN_W, SCREEN_H);
 
@@ -324,7 +325,8 @@ void setup() {
 }
 
 void loop() {
-    handleTouch();
+    M5.update();
+    handleButtons();
 
     unsigned long now = millis();
     if (now - lastPollMs > POLL_INTERVAL_MS) {
