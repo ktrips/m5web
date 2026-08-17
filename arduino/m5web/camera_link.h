@@ -44,6 +44,7 @@ struct Status {
     uint32_t frameSeq;   // increments each time a new frame is stored
     int8_t brightness;   // default adjustment applied to future frames, -100..100
     int8_t contrast;     // default adjustment applied to future frames, -100..100
+    uint16_t rotationDeg;  // default rotation applied to future frames, one of 0/90/180/270
     char label[kMaxLabelLen + 1];  // "" if nothing was detected
 };
 
@@ -60,6 +61,14 @@ void setMode(Mode m);  // persisted across reboots
 // reprocessed. Takes `int` (not int8_t) so out-of-range input from an API
 // caller gets clamped rather than silently wrapping around.
 void setAdjust(int brightness, int contrast);
+
+// Default rotation (0/90/180/270, wraps) applied to every frame *received*
+// from this point on — like setAdjust(), never retroactive to an
+// already-buffered/pending frame. Each call adds another 90° clockwise on
+// top of the current default, persisted across reboots. Distinct from
+// rotate() below, which rotates the currently-held frame immediately
+// (used for one-off adjustment of a photo right before printing it).
+void rotateDefaultBy90();
 
 Status status();
 

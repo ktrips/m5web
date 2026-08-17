@@ -49,6 +49,7 @@ Preferences prefs;
 Mode currentMode = Mode::kAuto;
 int8_t currentBrightness = 0;  // -100..100, same range/meaning as the JS slider
 int8_t currentContrast = 0;
+uint16_t currentRotationDeg = 0;  // 0/90/180/270, applied to every frame as it's received
 
 uint8_t frameBuffer[(size_t)Printer::kPrintWidthBytes * kMaxHeightDots];
 uint16_t frameHeight = 0;
@@ -70,6 +71,43 @@ bool getBit(const uint8_t *buf, uint16_t bytesPerRow, uint16_t x, uint16_t y) {
 void setBit(uint8_t *buf, uint16_t bytesPerRow, uint16_t x, uint16_t y, bool black) {
     if (!black) return;  // caller pre-zeroes the buffer, so white just means "leave it"
     buf[(size_t)y * bytesPerRow + (x >> 3)] |= 0x80 >> (x & 7);
+}
+
+// Rotates frameBuffer 90° clockwise in place (via rotateScratch), rescaled
+// back to kPrintWidthDots wide so the result stays printable — see the
+// rotate() doc comment in camera_link.h for why a plain rotate alone isn't
+// printable. Shared by rotate() (manual, one-shot, bumps frameSeq) and
+// finishIncomingFrame() (applies currentRotationDeg/90 times to every
+// newly-received frame, no frameSeq bump needed since the frame isn't
+// "ready" yet at that point).
+void rotateBufferOnce() {
+    const uint16_t bytesPerRow = Printer::kPrintWidthBytes;
+    const uint16_t w0 = Printer::kPrintWidthDots;  // original width, always 384
+    const uint16_t h0 = frameHeight;                // original height
+
+    // A 90°-CW rotation alone would turn w0 x h0 into h0 x w0 — not
+    // printable. Rescaled back to width w0 (aspect-preserving) instead, so
+    // hf is h0's rotation-and-rescale counterpart: hf = w0 * (w0 / h0).
+    uint32_t hf32 = ((uint32_t)w0 * w0) / h0;
+    uint16_t hf = (hf32 < 1) ? 1 : (hf32 > kMaxHeightDots ? kMaxHeightDots : (uint16_t)hf32);
+
+    // Nearest-neighbor, inverse-mapped: for each output pixel, find the
+    // original pixel it came from, combining the rotate and the rescale
+    // into one pass. No source grayscale survives past dithering, so this
+    // (same bit-level approach as m5paper.ino's own frame scaling) is the
+    // best achievable quality for a repeated rotate.
+    memset(rotateScratch, 0, (size_t)bytesPerRow * hf);
+    for (uint16_t yf = 0; yf < hf; yf++) {
+        uint16_t x = (uint16_t)(((uint32_t)yf * w0) / hf);  // 0..w0-1
+        for (uint16_t xf = 0; xf < w0; xf++) {
+            uint16_t xr = (uint16_t)(((uint32_t)xf * h0) / w0);  // 0..h0-1
+            uint16_t y = (h0 - 1) - xr;
+            setBit(rotateScratch, bytesPerRow, xf, yf, getBit(frameBuffer, bytesPerRow, x, y));
+        }
+    }
+
+    memcpy(frameBuffer, rotateScratch, (size_t)bytesPerRow * hf);
+    frameHeight = hf;
 }
 
 int8_t clampAdjust(int v) {
@@ -135,6 +173,7 @@ void finishIncomingFrame(uint8_t receivedChecksum) {
     }
     frameHeight = incomingHeight;
     memcpy(frameLabel, incomingLabel, sizeof(frameLabel));
+    for (uint16_t applied = 0; applied < currentRotationDeg; applied += 90) rotateBufferOnce();
     frameReady = true;
     frameSeq++;
     Serial.printf("[camera_link] frame received: %ux%u label=\"%s\" (mode=%s, checksum=%s)\n",
@@ -251,6 +290,7 @@ void begin() {
     currentMode = (prefs.getString("mode", "auto") == "preview") ? Mode::kPreview : Mode::kAuto;
     currentBrightness = clampAdjust(prefs.getInt("brightness", 0));
     currentContrast = clampAdjust(prefs.getInt("contrast", 0));
+    currentRotationDeg = prefs.getUShort("rotationDeg", 0) % 360;
 }
 
 void poll() {
@@ -276,8 +316,9 @@ void setAdjust(int brightness, int contrast) {
 }
 
 Status status() {
-    Status s{currentMode,        frameReady,        pendingPrint,     Printer::kPrintWidthDots,
-             frameHeight,        frameSeq,           currentBrightness, currentContrast};
+    Status s{currentMode,       frameReady, pendingPrint, Printer::kPrintWidthDots,
+              frameHeight,      frameSeq,   currentBrightness, currentContrast,
+              currentRotationDeg};
     memcpy(s.label, frameLabel, sizeof(s.label));
     return s;
 }
@@ -297,38 +338,18 @@ void discardPending() {
 
 bool rotate() {
     if (!frameReady) return false;
-
-    const uint16_t bytesPerRow = Printer::kPrintWidthBytes;
-    const uint16_t w0 = Printer::kPrintWidthDots;  // original width, always 384
-    const uint16_t h0 = frameHeight;                // original height
-
-    // A 90°-CW rotation alone would turn w0 x h0 into h0 x w0 — not
-    // printable (see the header comment). Rescaled back to width w0
-    // (aspect-preserving) instead, so hf is h0's rotation-and-rescale
-    // counterpart: hf = w0 * (w0 / h0).
-    uint32_t hf32 = ((uint32_t)w0 * w0) / h0;
-    uint16_t hf = (hf32 < 1) ? 1 : (hf32 > kMaxHeightDots ? kMaxHeightDots : (uint16_t)hf32);
-
-    // Nearest-neighbor, inverse-mapped: for each output pixel, find the
-    // original pixel it came from, combining the rotate and the rescale
-    // into one pass. No source grayscale survives past dithering, so this
-    // (same bit-level approach as m5paper.ino's own frame scaling) is the
-    // best achievable quality for a repeated rotate.
-    memset(rotateScratch, 0, (size_t)bytesPerRow * hf);
-    for (uint16_t yf = 0; yf < hf; yf++) {
-        uint16_t x = (uint16_t)(((uint32_t)yf * w0) / hf);  // 0..w0-1
-        for (uint16_t xf = 0; xf < w0; xf++) {
-            uint16_t xr = (uint16_t)(((uint32_t)xf * h0) / w0);  // 0..h0-1
-            uint16_t y = (h0 - 1) - xr;
-            setBit(rotateScratch, bytesPerRow, xf, yf, getBit(frameBuffer, bytesPerRow, x, y));
-        }
-    }
-
-    memcpy(frameBuffer, rotateScratch, (size_t)bytesPerRow * hf);
-    frameHeight = hf;
+    uint16_t before = frameHeight;
+    rotateBufferOnce();
     frameSeq++;
-    Serial.printf("[camera_link] rotated 90deg CW: %ux%u -> %ux%u\n", w0, h0, w0, hf);
+    Serial.printf("[camera_link] rotated 90deg CW: %ux%u -> %ux%u\n", Printer::kPrintWidthDots, before,
+                  Printer::kPrintWidthDots, frameHeight);
     return true;
+}
+
+void rotateDefaultBy90() {
+    currentRotationDeg = (currentRotationDeg + 90) % 360;
+    prefs.putUShort("rotationDeg", currentRotationDeg);
+    Serial.printf("[camera_link] default rotation set to %u deg\n", currentRotationDeg);
 }
 
 const uint8_t *frameData() { return frameReady ? frameBuffer : nullptr; }

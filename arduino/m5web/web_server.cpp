@@ -218,6 +218,7 @@ void handleCameraStatus() {
     json += "\"frameSeq\":" + String(s.frameSeq) + ",";
     json += "\"brightness\":" + String(s.brightness) + ",";
     json += "\"contrast\":" + String(s.contrast) + ",";
+    json += "\"rotationDeg\":" + String(s.rotationDeg) + ",";
     json += "\"label\":\"" + jsonEscape(s.label) + "\"";
     json += "}";
     server.send(200, "application/json", json);
@@ -268,6 +269,12 @@ void handleCameraRotate() {
         return;
     }
     Serial.println("[web] camera frame rotated 90deg CW");
+    sendPlain(200, "OK");
+}
+
+void handleCameraRotateDefault() {
+    CameraLink::rotateDefaultBy90();
+    Serial.println("[web] camera default rotation +90deg");
     sendPlain(200, "OK");
 }
 
@@ -419,6 +426,7 @@ void begin() {
     server.on("/api/camera/print", HTTP_POST, handleCameraPrint);
     server.on("/api/camera/discard", HTTP_POST, handleCameraDiscard);
     server.on("/api/camera/rotate", HTTP_POST, handleCameraRotate);
+    server.on("/api/camera/rotate-default", HTTP_POST, handleCameraRotateDefault);
     server.on("/api/camera/frame", HTTP_GET, handleCameraFrame);
     server.on("/api/gallery", HTTP_GET, handleGalleryList);
     server.on("/api/gallery/frame", HTTP_GET, handleGalleryFrame);

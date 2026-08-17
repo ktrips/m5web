@@ -230,7 +230,7 @@
     </div>
 
     <div class="card">
-      <h2>M5StickV印刷モード</h2>
+      <h2>M5StickV設定</h2>
       <div class="radio-line">
         <input type="radio" name="camMode" id="camModeAuto" value="auto">
         <label for="camModeAuto" style="margin:0;color:var(--text)">事後閲覧方式（自動印刷→あとで確認）</label>
@@ -240,6 +240,9 @@
         <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷）</label>
       </div>
       <p class="meta">ウェブ上に表示された後に印刷ボタンを押すか、ATOMのボタンを押して印刷。</p>
+      <label>写真の回転（次に受信するフレームから適用）</label>
+      <button type="button" class="secondary full" id="camDefaultRotateBtn">回転（現在: <span id="camDefaultRotateVal">0</span>°）</button>
+      <p class="meta">押すたびに時計回りに90°ずつ回転します。すでに受信・表示中の1枚には遡って反映されません。</p>
     </div>
 
     <div class="card">
@@ -737,6 +740,7 @@ async function refreshCameraStatus() {
 
     const modeEl = document.getElementById(s.mode === "preview" ? "camModePreview" : "camModeAuto");
     modeEl.checked = true;
+    $("camDefaultRotateVal").textContent = s.rotationDeg;
 
     if (!settingsLoaded) {
       settingsLoaded = true;
@@ -785,6 +789,19 @@ document.querySelectorAll('input[name="camMode"]').forEach((el) => {
       /* ignore; next status poll will resync the radio buttons */
     }
   });
+});
+
+$("camDefaultRotateBtn").addEventListener("click", async () => {
+  const btn = $("camDefaultRotateBtn");
+  btn.disabled = true;
+  try {
+    await fetch("/api/camera/rotate-default", { method: "POST" });
+    await refreshCameraStatus(); // reflect the new value right away, don't wait for the next poll
+  } catch (err) {
+    /* ignore; next status poll will resync the displayed value */
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 async function saveDefaultAdjust() {
