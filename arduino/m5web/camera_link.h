@@ -73,6 +73,17 @@ bool printLastFrame();
 // Preview mode only: drop the currently pending frame without printing it.
 void discardPending();
 
+// Rotates the last stored frame 90° clockwise, in place. A received frame
+// is always exactly kPrintWidthDots wide (see the wire protocol above), so
+// a plain rotate would leave it kPrintWidthDots *tall* instead — not
+// printable (Printer::beginRaster requires exactly kPrintWidthDots wide).
+// Rescaled back to kPrintWidthDots wide (aspect-preserving, nearest-
+// neighbor) so the result stays printable, same as every other stored
+// frame; repeatable — each call adds another 90° on top of the last.
+// Returns false (no-op) if no frame has arrived yet. Bumps frameSeq so the
+// web UI's next poll picks up the new image/dimensions.
+bool rotate();
+
 // Raw packed 1bpp bitmap (MSB-first, 1=black) of the last stored frame, for
 // serving to the web UI. nullptr/0 if no frame has arrived yet.
 const uint8_t *frameData();

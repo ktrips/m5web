@@ -1,6 +1,7 @@
 #include "camera_link.h"
 
 #include <Preferences.h>
+#include <string.h>
 
 #include "caption.h"
 #include "clock.h"
@@ -55,6 +56,21 @@ char frameLabel[kMaxLabelLen + 1] = "";
 bool frameReady = false;
 bool pendingPrint = false;
 uint32_t frameSeq = 0;
+
+// Scratch space for rotate(): the transform reads and writes different
+// (x,y) positions, so it can't safely run in place over frameBuffer —
+// build the whole result here first, then copy it over.
+uint8_t rotateScratch[(size_t)Printer::kPrintWidthBytes * kMaxHeightDots];
+
+bool getBit(const uint8_t *buf, uint16_t bytesPerRow, uint16_t x, uint16_t y) {
+    uint8_t byte = buf[(size_t)y * bytesPerRow + (x >> 3)];
+    return (byte >> (7 - (x & 7))) & 1;
+}
+
+void setBit(uint8_t *buf, uint16_t bytesPerRow, uint16_t x, uint16_t y, bool black) {
+    if (!black) return;  // caller pre-zeroes the buffer, so white just means "leave it"
+    buf[(size_t)y * bytesPerRow + (x >> 3)] |= 0x80 >> (x & 7);
+}
 
 int8_t clampAdjust(int v) {
     if (v < -100) return -100;
@@ -277,6 +293,42 @@ bool printLastFrame() {
 void discardPending() {
     pendingPrint = false;
     Led::setCameraPending(false);
+}
+
+bool rotate() {
+    if (!frameReady) return false;
+
+    const uint16_t bytesPerRow = Printer::kPrintWidthBytes;
+    const uint16_t w0 = Printer::kPrintWidthDots;  // original width, always 384
+    const uint16_t h0 = frameHeight;                // original height
+
+    // A 90°-CW rotation alone would turn w0 x h0 into h0 x w0 — not
+    // printable (see the header comment). Rescaled back to width w0
+    // (aspect-preserving) instead, so hf is h0's rotation-and-rescale
+    // counterpart: hf = w0 * (w0 / h0).
+    uint32_t hf32 = ((uint32_t)w0 * w0) / h0;
+    uint16_t hf = (hf32 < 1) ? 1 : (hf32 > kMaxHeightDots ? kMaxHeightDots : (uint16_t)hf32);
+
+    // Nearest-neighbor, inverse-mapped: for each output pixel, find the
+    // original pixel it came from, combining the rotate and the rescale
+    // into one pass. No source grayscale survives past dithering, so this
+    // (same bit-level approach as m5paper.ino's own frame scaling) is the
+    // best achievable quality for a repeated rotate.
+    memset(rotateScratch, 0, (size_t)bytesPerRow * hf);
+    for (uint16_t yf = 0; yf < hf; yf++) {
+        uint16_t x = (uint16_t)(((uint32_t)yf * w0) / hf);  // 0..w0-1
+        for (uint16_t xf = 0; xf < w0; xf++) {
+            uint16_t xr = (uint16_t)(((uint32_t)xf * h0) / w0);  // 0..h0-1
+            uint16_t y = (h0 - 1) - xr;
+            setBit(rotateScratch, bytesPerRow, xf, yf, getBit(frameBuffer, bytesPerRow, x, y));
+        }
+    }
+
+    memcpy(frameBuffer, rotateScratch, (size_t)bytesPerRow * hf);
+    frameHeight = hf;
+    frameSeq++;
+    Serial.printf("[camera_link] rotated 90deg CW: %ux%u -> %ux%u\n", w0, h0, w0, hf);
+    return true;
 }
 
 const uint8_t *frameData() { return frameReady ? frameBuffer : nullptr; }

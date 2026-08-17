@@ -148,6 +148,7 @@
       <p class="detect-label hidden" id="camLabel"></p>
       <p class="meta" id="camMeta">まだ写真がありません</p>
       <div class="btn-row hidden" id="camActions">
+        <button class="secondary" id="camRotateBtn">回転</button>
         <button class="primary" id="camPrintBtn">印刷</button>
         <button class="secondary hidden" id="camDiscardBtn">破棄</button>
       </div>
@@ -239,6 +240,24 @@
         <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷）</label>
       </div>
       <p class="meta">ウェブ上に表示された後に印刷ボタンを押すか、ATOMのボタンを押して印刷。</p>
+    </div>
+
+    <div class="card">
+      <h2>M5Paper設定</h2>
+      <div class="radio-line">
+        <input type="radio" name="m5paperAuto" id="m5paperAutoOff" value="off" checked>
+        <label for="m5paperAutoOff" style="margin:0;color:var(--text)">自動更新無し（デフォルト）</label>
+      </div>
+      <div class="radio-line">
+        <input type="radio" name="m5paperAuto" id="m5paperAutoOn" value="on">
+        <label for="m5paperAutoOn" style="margin:0;color:var(--text)">自動更新有り</label>
+      </div>
+      <div id="m5paperIntervalWrap" class="hidden">
+        <label>画像の更新タイミング（秒）</label>
+        <input type="text" inputmode="decimal" id="m5paperPollInterval" placeholder="1">
+      </div>
+      <p class="meta">自動更新無しの場合、M5Paper本体のボタンを押した時にギャラリーが更新されます。</p>
+      <div class="msg" id="m5paperMsg"></div>
     </div>
 
     <div class="card">
@@ -789,6 +808,20 @@ $("defaultContrast").addEventListener("input", () => {
 $("defaultBrightness").addEventListener("change", saveDefaultAdjust);
 $("defaultContrast").addEventListener("change", saveDefaultAdjust);
 
+$("camRotateBtn").addEventListener("click", async () => {
+  const msg = $("camMsg");
+  $("camRotateBtn").disabled = true;
+  try {
+    const r = await fetch("/api/camera/rotate", { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    await refreshCameraStatus(); // reload the rotated frame right away, don't wait for the next poll
+  } catch (e) {
+    showMsg(msg, "回転に失敗しました: " + e.message, "err");
+  } finally {
+    $("camRotateBtn").disabled = false;
+  }
+});
+
 $("camPrintBtn").addEventListener("click", async () => {
   const msg = $("camMsg");
   $("camPrintBtn").disabled = true;
@@ -814,6 +847,61 @@ $("camDiscardBtn").addEventListener("click", async () => {
 
 refreshCameraStatus();
 setInterval(refreshCameraStatus, 3000);
+
+// ---------- M5Paper settings ----------
+
+let m5paperSettingsLoaded = false;
+
+function updateM5paperIntervalVisibility() {
+  $("m5paperIntervalWrap").classList.toggle("hidden", !$("m5paperAutoOn").checked);
+}
+
+async function refreshM5PaperSettings() {
+  if (m5paperSettingsLoaded) return; // only prefill once; don't clobber in-progress edits
+  try {
+    const r = await fetch("/api/m5paper/settings");
+    const s = await r.json();
+    m5paperSettingsLoaded = true;
+    $(s.autoRefresh ? "m5paperAutoOn" : "m5paperAutoOff").checked = true;
+    $("m5paperPollInterval").value = (s.pollIntervalMs || 1000) / 1000;
+    updateM5paperIntervalVisibility();
+  } catch (e) {
+    // transient network error; leave the fields as-is and try again next poll
+  }
+}
+
+async function saveM5PaperSettings() {
+  const msg = $("m5paperMsg");
+  const autoRefresh = $("m5paperAutoOn").checked;
+  const seconds = parseFloat($("m5paperPollInterval").value);
+  if (autoRefresh && (!isFinite(seconds) || seconds <= 0)) {
+    showMsg(msg, "正の数を入力してください", "err");
+    return;
+  }
+  const pollIntervalMs = isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 1000;
+  try {
+    const r = await fetch("/api/m5paper/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "autoRefresh=" + (autoRefresh ? "1" : "0") + "&pollIntervalMs=" + pollIntervalMs,
+    });
+    if (!r.ok) throw new Error(await r.text());
+    showMsg(msg, "保存しました", "ok");
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  }
+}
+
+document.querySelectorAll('input[name="m5paperAuto"]').forEach((el) => {
+  el.addEventListener("change", () => {
+    updateM5paperIntervalVisibility();
+    saveM5PaperSettings();
+  });
+});
+$("m5paperPollInterval").addEventListener("change", saveM5PaperSettings);
+
+refreshM5PaperSettings();
+setInterval(refreshM5PaperSettings, 4000);
 
 // ---------- gallery ----------
 

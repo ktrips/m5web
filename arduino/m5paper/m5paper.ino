@@ -72,7 +72,21 @@
 // with the ATOM's IP address instead (see README.md / pio device monitor).
 const char *M5WEB_HOST = "m5web.local";
 
-constexpr unsigned long POLL_INTERVAL_MS = 3000;
+// Whether the gallery is re-polled on a timer at all. Configurable from
+// the m5web page's 設定 tab ("M5Paper設定" > 自動更新無し/自動更新有り) —
+// defaults to OFF, matching that page's default. When off, this device
+// never fetches the gallery list on its own; a button press (see
+// handleButtons()) is the only thing that re-syncs it. See
+// fetchPollSettings() below, which pulls both this and pollIntervalMs
+// from /api/m5paper/settings on its own timer (kSettingsPollIntervalMs) —
+// that check itself always runs, regardless of this flag, so a toggle
+// flipped on the web page takes effect without a reboot.
+bool autoRefreshEnabled = false;
+
+// How often the gallery is re-polled when autoRefreshEnabled is true.
+// Configurable from the same M5Paper設定 card ("画像の更新タイミング").
+unsigned long pollIntervalMs = 1000;
+constexpr unsigned long kSettingsPollIntervalMs = 5000;
 
 // Fixed by the 58mm print head (Printer::kPrintWidthDots) — every saved
 // gallery entry is this wide; /api/gallery only reports each entry's
@@ -93,9 +107,9 @@ M5Canvas canvas(&M5.Display);
 // ---- layout (landscape — see the orientation caveat above) ----
 constexpr int SCREEN_W = 600;
 constexpr int SCREEN_H = 400;
-constexpr int MARGIN = 16;
-constexpr int META_H = 24;
-constexpr int LEGEND_H = 32;
+constexpr int MARGIN = 10;
+constexpr int META_H = 20;
+constexpr int LEGEND_H = 26;
 
 // ---- WiFi setup (AP mode + captive portal) ----
 constexpr uint8_t kDnsPort = 53;
@@ -115,6 +129,18 @@ struct GalleryEntry {
 GalleryEntry entries[kMaxEntries];
 int entryCount = 0;
 int selectedIndex = 0;
+
+// Double-tap tracking for BtnA/BtnB (see handleButtons()) — pressing the
+// same nav button twice within kDoubleTapWindowMs plays a distinct double
+// beep instead of the usual single one, landing on the entry two steps
+// away ("次の次"/"前の前") since each press already steps by one; the
+// window is generous (not a tight ~300ms double-click) because
+// handleButtons() may block on a network sync between presses when
+// auto-refresh is off (see syncGalleryList() there), which delays when a
+// fast second press is even noticed.
+constexpr unsigned long kDoubleTapWindowMs = 700;
+char lastNavButton = 0;  // 'A', 'B', or 0 (none yet / already consumed)
+unsigned long lastNavPressMs = 0;
 
 uint16_t loadedEntryId = 0xFFFF;  // id currently held in frameBuf, or 0xFFFF (no valid id) if none
 uint8_t *frameBuf = nullptr;
@@ -199,6 +225,36 @@ bool fetchGalleryFrame(uint16_t id, uint8_t *buf, size_t bufLen) {
     return ok;
 }
 
+// Refetches autoRefreshEnabled/pollIntervalMs from /api/m5paper/settings.
+// Leaves both untouched on any failure (parse error, network error) — a
+// transient glitch here shouldn't disturb whatever mode is already active.
+void fetchPollSettings() {
+    HTTPClient http;
+    if (!http.begin(apiUrl("/api/m5paper/settings"))) return;
+    int code = http.GET();
+    if (code != 200) {
+        http.end();
+        return;
+    }
+    String body = http.getString();
+    http.end();
+
+    StaticJsonDocument<128> doc;
+    if (deserializeJson(doc, body) != DeserializationError::Ok) return;
+
+    bool autoRefresh = doc["autoRefresh"] | false;
+    if (autoRefresh != autoRefreshEnabled) {
+        Serial.printf("[api] auto-refresh %s\n", autoRefresh ? "enabled" : "disabled");
+        autoRefreshEnabled = autoRefresh;
+    }
+
+    unsigned long ms = doc["pollIntervalMs"] | 0;
+    if (ms != 0 && ms != pollIntervalMs) {
+        Serial.printf("[api] poll interval updated: %lums -> %lums\n", pollIntervalMs, ms);
+        pollIntervalMs = ms;
+    }
+}
+
 bool printGalleryEntry(uint16_t id) {
     String path = "/api/gallery/print?id=" + String(id);
     HTTPClient http;
@@ -218,7 +274,11 @@ bool printGalleryEntry(uint16_t id) {
 // within that box.
 void drawFrame(const uint8_t *buf, uint16_t srcW, uint16_t srcH, int destX, int destY, int destW, int destH) {
     float scale = min(destW / (float)srcW, destH / (float)srcH);
-    if (scale > 2.0f) scale = 2.0f;
+    // Capped well above what destW/destH alone would ever produce for a
+    // 384-dot-wide print image on this 600x400 screen — this cap only
+    // matters for short/narrow frames, so it's about "don't blow up a
+    // tiny frame to blocky pixels", not a limit users will normally hit.
+    if (scale > 3.0f) scale = 3.0f;
     int drawW = (int)(srcW * scale);
     int drawH = (int)(srcH * scale);
     int offX = destX + (destW - drawW) / 2;
@@ -236,6 +296,43 @@ void drawFrame(const uint8_t *buf, uint16_t srcW, uint16_t srcH, int destX, int 
             canvas.drawPixel(offX + x, offY + y, black ? BLACK : WHITE);
         }
     }
+}
+
+// ---- speaker feedback ----
+// M5PaperColor has a real onboard speaker (ES8311 codec + 1W/8Ω driver),
+// unlike the plain monochrome M5Paper, so M5Unified's Speaker_Class works
+// normally here — untested on real hardware like the rest of this sketch
+// (see the top-of-file caveats).
+constexpr uint8_t kClickVolume = 120;    // short per-button acknowledgement beep
+constexpr uint8_t kPrintedVolume = 255;  // louder "done" beep — printing takes a few seconds unattended
+
+// Single short "pi" — played whenever a button press causes any visible
+// reaction (selection change or a print starting), so there's always
+// immediate feedback that the press registered.
+void beepClick() {
+    M5.Speaker.setVolume(kClickVolume);
+    M5.Speaker.tone(2000, 60);
+}
+
+// Two short "pi"s at the same pitch/volume as beepClick() — played instead
+// of it when a nav button (BtnA/BtnB) is pressed twice within
+// kDoubleTapWindowMs, so a fast double-press is audibly distinct from two
+// separate slow single presses.
+void beepDoubleClick() {
+    M5.Speaker.setVolume(kClickVolume);
+    M5.Speaker.tone(2000, 55);
+    delay(80);
+    M5.Speaker.tone(2000, 55);
+}
+
+// Double "pi-pi", louder than beepClick() — played once a print actually
+// finishes, so it's distinguishable from the press-acknowledgement beep
+// even if a user only half-hears it.
+void beepPrinted() {
+    M5.Speaker.setVolume(kPrintedVolume);
+    M5.Speaker.tone(2600, 90);
+    delay(140);
+    M5.Speaker.tone(2600, 90);
 }
 
 // Bottom legend showing what each physical button currently does — plain
@@ -368,10 +465,50 @@ void pollGallery() {
 // (toward higher index = older), BtnC = print the selected entry.
 // M5.update() must run each loop() first so .wasPressed() reflects this
 // cycle's state.
+//
+// When autoRefreshEnabled is false (the default), pollGallery() never runs
+// on a timer — so a button press is this device's only trigger to re-sync
+// the gallery list from the server first, otherwise a photo taken or
+// deleted elsewhere would never show up here until the next reboot. Every
+// press beeps and re-renders, whether or not the sync itself found
+// anything new — that's the "screen update on button press" this mode
+// relies on in place of a timer.
+//
+// BtnA/BtnB double-tap (see kDoubleTapWindowMs): each press still only
+// steps by one entry, same as always — a fast double-press just plays
+// beepDoubleClick() instead of beepClick() on its second press, so two
+// presses landing on "次の次"/"前の前" (one press's worth further than a
+// single tap) is confirmed audibly, not just visually.
 void handleButtons() {
-    if (entryCount == 0) return;
+    bool a = M5.BtnA.wasPressed();
+    bool b = M5.BtnB.wasPressed();
+    bool c = M5.BtnC.wasPressed();
+    if (!a && !b && !c) return;
 
-    if (M5.BtnA.wasPressed()) {
+    if (a || b) {
+        char thisButton = a ? 'A' : 'B';
+        unsigned long now = millis();
+        if (lastNavButton == thisButton && (now - lastNavPressMs) <= kDoubleTapWindowMs) {
+            beepDoubleClick();
+            lastNavButton = 0;  // consumed — a third rapid press starts a fresh sequence
+        } else {
+            beepClick();
+            lastNavButton = thisButton;
+            lastNavPressMs = now;
+        }
+    } else {
+        beepClick();
+    }
+
+    if (!autoRefreshEnabled) syncGalleryList();
+
+    if (entryCount == 0) {
+        statusMsg = "";
+        render();
+        return;
+    }
+
+    if (a) {
         selectedIndex = (selectedIndex - 1 + entryCount) % entryCount;
         Serial.printf("[btn] A pressed: prev -> %d/%d (#%u)\n", selectedIndex + 1, entryCount,
                       entries[selectedIndex].id);
@@ -379,7 +516,7 @@ void handleButtons() {
         render();  // show the (possibly not-yet-loaded) selection immediately
         ensureSelectedLoaded();
         render();
-    } else if (M5.BtnB.wasPressed()) {
+    } else if (b) {
         selectedIndex = (selectedIndex + 1) % entryCount;
         Serial.printf("[btn] B pressed: next -> %d/%d (#%u)\n", selectedIndex + 1, entryCount,
                       entries[selectedIndex].id);
@@ -387,13 +524,18 @@ void handleButtons() {
         render();
         ensureSelectedLoaded();
         render();
-    } else if (M5.BtnC.wasPressed()) {
+    } else if (c) {
         uint16_t id = entries[selectedIndex].id;
         Serial.printf("[btn] C pressed: print #%u\n", id);
         statusMsg = "印刷しています…";
         render();
         bool ok = printGalleryEntry(id);
-        statusMsg = ok ? "印刷しました" : "印刷に失敗しました";
+        if (ok) {
+            statusMsg = "Printed";
+            beepPrinted();
+        } else {
+            statusMsg = "印刷に失敗しました";
+        }
         render();
     }
 }
@@ -700,6 +842,7 @@ void setup() {
     ensureWifiConnected();
     Serial.printf("[wifi] ready: ip=%s host=%s\n", WiFi.localIP().toString().c_str(), M5WEB_HOST);
 
+    fetchPollSettings();
     syncGalleryList();
     ensureSelectedLoaded();
     render();
@@ -707,13 +850,19 @@ void setup() {
     Serial.println("=== m5paper ready ===");
 }
 
+unsigned long lastSettingsPollMs = 0;
+
 void loop() {
     M5.update();
     handleButtons();
     printHeartbeat();
 
     unsigned long now = millis();
-    if (now - lastPollMs > POLL_INTERVAL_MS) {
+    if (now - lastSettingsPollMs > kSettingsPollIntervalMs) {
+        lastSettingsPollMs = now;
+        fetchPollSettings();
+    }
+    if (autoRefreshEnabled && (now - lastPollMs > pollIntervalMs)) {
         lastPollMs = now;
         pollGallery();
     }

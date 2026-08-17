@@ -1,6 +1,7 @@
 #include "web_server.h"
 
 #include <LittleFS.h>
+#include <Preferences.h>
 #include <WebServer.h>
 
 #include "camera_link.h"
@@ -18,7 +19,19 @@ namespace {
 constexpr uint16_t kMaxHeightDots = 2000;  // ~250mm; keeps jobs to a sane length
 constexpr size_t kMaxQrLength = 300;  // sanity cap; printer's symbol buffer is limited
 
+// When autoRefresh is on, M5Paper polls /api/gallery on this interval to
+// notice new/removed photos — see ../m5paper/m5paper.ino's settings poll.
+// autoRefresh defaults to off: M5Paper then only re-syncs the gallery on a
+// button press instead of a timer. Both persisted so they survive a
+// reboot, same pattern as camera_link.cpp's brightness/contrast prefs.
+constexpr unsigned long kDefaultM5PaperPollMs = 1000;
+constexpr unsigned long kMinM5PaperPollMs = 250;
+constexpr unsigned long kMaxM5PaperPollMs = 60000;
+
 WebServer server(80);
+Preferences m5paperPrefs;
+unsigned long m5paperPollMs = kDefaultM5PaperPollMs;
+bool m5paperAutoRefresh = false;
 
 uint16_t pendingWidth = 0;
 uint16_t pendingHeight = 0;
@@ -249,6 +262,15 @@ void handleCameraDiscard() {
     sendPlain(200, "OK");
 }
 
+void handleCameraRotate() {
+    if (!CameraLink::rotate()) {
+        sendPlain(400, "no camera frame yet");
+        return;
+    }
+    Serial.println("[web] camera frame rotated 90deg CW");
+    sendPlain(200, "OK");
+}
+
 void handleCameraFrame() {
     const uint8_t *data = CameraLink::frameData();
     size_t len = CameraLink::frameDataLen();
@@ -343,10 +365,42 @@ void handleGalleryDelete() {
     sendPlain(200, "OK");
 }
 
+void handleM5PaperSettingsGet() {
+    String json = "{\"autoRefresh\":" + String(m5paperAutoRefresh ? "true" : "false") +
+                  ",\"pollIntervalMs\":" + String(m5paperPollMs) + "}";
+    server.send(200, "application/json", json);
+}
+
+void handleM5PaperSettingsSet() {
+    if (!server.hasArg("pollIntervalMs")) {
+        sendPlain(400, "pollIntervalMs required");
+        return;
+    }
+    long ms = server.arg("pollIntervalMs").toInt();
+    if (ms < (long)kMinM5PaperPollMs || ms > (long)kMaxM5PaperPollMs) {
+        sendPlain(400, "pollIntervalMs must be " + String(kMinM5PaperPollMs) + "-" + String(kMaxM5PaperPollMs));
+        return;
+    }
+    m5paperPollMs = (unsigned long)ms;
+    m5paperPrefs.putULong("pollMs", m5paperPollMs);
+
+    if (server.hasArg("autoRefresh")) {
+        m5paperAutoRefresh = server.arg("autoRefresh").toInt() != 0;
+        m5paperPrefs.putBool("autoRefresh", m5paperAutoRefresh);
+    }
+
+    Serial.printf("[web] m5paper autoRefresh=%d pollIntervalMs=%lu\n", m5paperAutoRefresh, m5paperPollMs);
+    sendPlain(200, "OK");
+}
+
 }  // namespace
 
 void begin() {
     LittleFS.begin(true);
+
+    m5paperPrefs.begin("m5web_paper", false);
+    m5paperPollMs = m5paperPrefs.getULong("pollMs", kDefaultM5PaperPollMs);
+    m5paperAutoRefresh = m5paperPrefs.getBool("autoRefresh", false);
 
     server.on("/", HTTP_GET, handleRoot);
     server.onNotFound(handleRoot);  // catch-all keeps AP captive-portal probes on the setup page
@@ -364,11 +418,14 @@ void begin() {
     server.on("/api/camera/settings", HTTP_POST, handleCameraSettings);
     server.on("/api/camera/print", HTTP_POST, handleCameraPrint);
     server.on("/api/camera/discard", HTTP_POST, handleCameraDiscard);
+    server.on("/api/camera/rotate", HTTP_POST, handleCameraRotate);
     server.on("/api/camera/frame", HTTP_GET, handleCameraFrame);
     server.on("/api/gallery", HTTP_GET, handleGalleryList);
     server.on("/api/gallery/frame", HTTP_GET, handleGalleryFrame);
     server.on("/api/gallery/print", HTTP_POST, handleGalleryPrint);
     server.on("/api/gallery/delete", HTTP_POST, handleGalleryDelete);
+    server.on("/api/m5paper/settings", HTTP_GET, handleM5PaperSettingsGet);
+    server.on("/api/m5paper/settings", HTTP_POST, handleM5PaperSettingsSet);
 
     server.begin();
 }
