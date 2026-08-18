@@ -253,7 +253,14 @@
         <input type="radio" name="camMode" id="camModePreview" value="preview">
         <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷）</label>
       </div>
-      <p class="meta">ウェブ上に表示された後に印刷ボタンを押すか、ATOMのボタンを押して印刷。</p>
+      <div class="radio-line">
+        <input type="radio" name="camMode" id="camModeAutoHaiku" value="autoHaiku">
+        <label for="camModeAutoHaiku" style="margin:0;color:var(--text)">自動俳句印刷モード（撮影→俳句生成→両方印刷）</label>
+      </div>
+      <p class="meta">ウェブ上に表示された後に印刷ボタンを押すか、ATOMのボタンを押して印刷。
+      自動俳句印刷モードでは、写真の印刷はATOM Lite側で自動的に行われますが、俳句の生成・印刷は
+      このページを開いているブラウザが行うため、<b>m5webページを開いたままにしておく必要が
+      あります</b>（OpenAI APIキーも設定タブで登録しておいてください）。</p>
       <label>写真の回転（次に受信するフレームから適用）</label>
       <button type="button" class="secondary full" id="camDefaultRotateBtn">回転（現在: <span id="camDefaultRotateVal">0</span>°）</button>
       <p class="meta">押すたびに時計回りに90°ずつ回転します。すでに受信・表示中の1枚には遡って反映されません。</p>
@@ -765,8 +772,8 @@ async function refreshCameraStatus() {
     const r = await fetch("/api/camera/status");
     const s = await r.json();
 
-    const modeEl = document.getElementById(s.mode === "preview" ? "camModePreview" : "camModeAuto");
-    modeEl.checked = true;
+    const modeElId = s.mode === "preview" ? "camModePreview" : s.mode === "autoHaiku" ? "camModeAutoHaiku" : "camModeAuto";
+    document.getElementById(modeElId).checked = true;
     $("camDefaultRotateVal").textContent = s.rotationDeg;
 
     if (!settingsLoaded) {
@@ -800,6 +807,7 @@ async function refreshCameraStatus() {
     if (s.frameSeq !== camLastSeq) {
       camLastSeq = s.frameSeq;
       await loadCameraFrame(s.width, s.height);
+      if (s.mode === "autoHaiku") runAutoHaiku();
     }
   } catch (e) {
     // transient network error while polling; try again next interval
@@ -1024,11 +1032,32 @@ async function requestHaiku(canvas, btn, textEl, printBtn, msgEl) {
     textEl.classList.remove("hidden");
     printBtn.classList.remove("hidden");
     msgEl.className = "msg";
+    return true;
   } catch (e) {
     showMsg(msgEl, "俳句の生成に失敗しました: " + e.message, "err");
+    return false;
   } finally {
     btn.disabled = false;
   }
+}
+
+// Auto俳句印刷モード: called from refreshCameraStatus() whenever a new
+// M5StickV frame shows up while that mode is selected. The photo itself is
+// already printed by ATOM Lite the moment it receives the frame (same as
+// 事後閲覧方式) — this only handles the haiku half, which needs the
+// browser (canvas -> PNG -> /api/haiku, see the module doc comment above
+// canvasToBase64Png()). Reuses requestHaiku()/printHaikuFromText() as-is,
+// so it shows the same status messages a manual click would and, via
+// camHaikuBtn.disabled, can't run concurrently with a manual "俳句を作る"
+// press. Not queued: if a second frame arrives while this is still
+// running (a multi-second OpenAI round-trip), that frame's photo still
+// auto-prints normally, but its haiku is skipped — only the frame being
+// processed when this call started gets one.
+async function runAutoHaiku() {
+  if ($("camHaikuBtn").disabled) return;
+  const ok = await requestHaiku(
+    $("camPreviewCanvas"), $("camHaikuBtn"), $("camHaikuText"), $("camHaikuPrintBtn"), $("camHaikuMsg"));
+  if (ok) await printHaikuFromText($("camHaikuText"), $("camHaikuPrintBtn"), $("camHaikuMsg"));
 }
 
 $("camHaikuBtn").addEventListener("click", () => {

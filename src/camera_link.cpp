@@ -110,6 +110,20 @@ void rotateBufferOnce() {
     frameHeight = hf;
 }
 
+const char *modeName(Mode m) {
+    switch (m) {
+        case Mode::kPreview: return "preview";
+        case Mode::kAutoHaiku: return "autoHaiku";
+        default: return "auto";
+    }
+}
+
+Mode modeFromName(const String &s) {
+    if (s == "preview") return Mode::kPreview;
+    if (s == "autoHaiku") return Mode::kAutoHaiku;
+    return Mode::kAuto;
+}
+
 int8_t clampAdjust(int v) {
     if (v < -100) return -100;
     if (v > 100) return 100;
@@ -177,17 +191,21 @@ void finishIncomingFrame(uint8_t receivedChecksum) {
     frameReady = true;
     frameSeq++;
     Serial.printf("[camera_link] frame received: %ux%u label=\"%s\" (mode=%s, checksum=%s)\n",
-                  Printer::kPrintWidthDots, frameHeight, frameLabel,
-                  currentMode == Mode::kPreview ? "preview" : "auto", checksumOk ? "ok" : "FAIL");
+                  Printer::kPrintWidthDots, frameHeight, frameLabel, modeName(currentMode),
+                  checksumOk ? "ok" : "FAIL");
     Gallery::save(frameBuffer, (size_t)Printer::kPrintWidthBytes * frameHeight, frameHeight, frameLabel);
     Led::notifyNewImage();
-    if (currentMode == Mode::kAuto && checksumOk) {
+    // kAutoHaiku prints the photo immediately too (its haiku half is
+    // handled entirely by the browser polling /api/camera/status — see
+    // the Mode enum's doc comment in camera_link.h).
+    if ((currentMode == Mode::kAuto || currentMode == Mode::kAutoHaiku) && checksumOk) {
         pendingPrint = false;
         printStoredFrame();
         Serial.println("[camera_link] auto-printed");
     } else {
-        // Preview mode, or a corrupted frame in auto mode: never print
-        // without either an explicit checksum pass or a human confirming.
+        // Preview mode, or a corrupted frame in auto/autoHaiku mode: never
+        // print without either an explicit checksum pass or a human
+        // confirming.
         pendingPrint = true;
     }
     Led::setCameraPending(pendingPrint);
@@ -287,7 +305,7 @@ void handleByte(uint8_t b) {
 void begin() {
     Serial1.begin(kBaud, SERIAL_8N1, kRxPin, kTxPin);
     prefs.begin("m5web_cam", false);
-    currentMode = (prefs.getString("mode", "auto") == "preview") ? Mode::kPreview : Mode::kAuto;
+    currentMode = modeFromName(prefs.getString("mode", "auto"));
     currentBrightness = clampAdjust(prefs.getInt("brightness", 0));
     currentContrast = clampAdjust(prefs.getInt("contrast", 0));
     currentRotationDeg = prefs.getUShort("rotationDeg", 0) % 360;
@@ -303,8 +321,8 @@ Mode mode() { return currentMode; }
 
 void setMode(Mode m) {
     currentMode = m;
-    prefs.putString("mode", m == Mode::kPreview ? "preview" : "auto");
-    Serial.printf("[camera_link] mode set to %s\n", m == Mode::kPreview ? "preview" : "auto");
+    prefs.putString("mode", modeName(m));
+    Serial.printf("[camera_link] mode set to %s\n", modeName(m));
 }
 
 void setAdjust(int brightness, int contrast) {

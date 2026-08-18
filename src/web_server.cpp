@@ -219,7 +219,10 @@ void handleImageUploadChunk() {
 void handleCameraStatus() {
     CameraLink::Status s = CameraLink::status();
     String json = "{";
-    json += "\"mode\":\"" + String(s.mode == CameraLink::Mode::kPreview ? "preview" : "auto") + "\",";
+    String modeStr = s.mode == CameraLink::Mode::kPreview     ? "preview"
+                     : s.mode == CameraLink::Mode::kAutoHaiku ? "autoHaiku"
+                                                               : "auto";
+    json += "\"mode\":\"" + modeStr + "\",";
     json += "\"frameReady\":" + String(s.frameReady ? "true" : "false") + ",";
     json += "\"pendingPrint\":" + String(s.pendingPrint ? "true" : "false") + ",";
     json += "\"width\":" + String(s.width) + ",";
@@ -248,12 +251,15 @@ void handleCameraModeSet() {
         return;
     }
     String m = server.arg("mode");
-    if (m != "auto" && m != "preview") {
-        sendPlain(400, "mode must be 'auto' or 'preview'");
+    if (m != "auto" && m != "preview" && m != "autoHaiku") {
+        sendPlain(400, "mode must be 'auto', 'preview', or 'autoHaiku'");
         return;
     }
     Serial.printf("[web] camera mode set to '%s'\n", m.c_str());
-    CameraLink::setMode(m == "preview" ? CameraLink::Mode::kPreview : CameraLink::Mode::kAuto);
+    CameraLink::Mode mode = m == "preview"     ? CameraLink::Mode::kPreview
+                             : m == "autoHaiku" ? CameraLink::Mode::kAutoHaiku
+                                                 : CameraLink::Mode::kAuto;
+    CameraLink::setMode(mode);
     sendPlain(200, "OK");
 }
 
