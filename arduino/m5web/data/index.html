@@ -102,10 +102,10 @@
     color: var(--accent); background: rgba(61,139,253,.15); padding: 4px 10px; border-radius: 20px;
   }
   .haiku-box {
-    margin-top: 10px; padding: 14px 16px; border-radius: 10px;
-    background: #1b1c20; border: 1px solid var(--border);
-    font-size: 16px; line-height: 1.7; white-space: pre-wrap;
+    margin-top: 10px; padding: 14px 16px;
+    font-size: 16px; line-height: 1.7;
     text-align: center; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+    resize: vertical;
   }
 </style>
 </head>
@@ -160,7 +160,8 @@
       </div>
       <div class="msg" id="camMsg"></div>
       <button class="secondary full hidden" id="camHaikuBtn" style="margin-top:8px">俳句を作る</button>
-      <div class="haiku-box hidden" id="camHaikuBox"></div>
+      <textarea class="haiku-box hidden" id="camHaikuText" rows="3" placeholder="生成された俳句がここに表示されます（編集可）"></textarea>
+      <button class="primary full hidden" id="camHaikuPrintBtn" style="margin-top:8px">俳句プリント</button>
       <div class="msg" id="camHaikuMsg"></div>
     </div>
 
@@ -201,7 +202,8 @@
         <progress id="imageProgress" max="100" value="0"></progress>
         <div class="msg" id="imageMsg"></div>
         <button class="secondary full" id="uploadHaikuBtn" style="margin-top:8px">俳句を作る</button>
-        <div class="haiku-box hidden" id="uploadHaikuBox"></div>
+        <textarea class="haiku-box hidden" id="uploadHaikuText" rows="3" placeholder="生成された俳句がここに表示されます（編集可）"></textarea>
+        <button class="primary full hidden" id="uploadHaikuPrintBtn" style="margin-top:8px">俳句プリント</button>
         <div class="msg" id="uploadHaikuMsg"></div>
       </div>
     </div>
@@ -1003,9 +1005,10 @@ function canvasToBase64Png(canvas) {
   return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
 }
 
-async function requestHaiku(canvas, btn, boxEl, msgEl) {
+async function requestHaiku(canvas, btn, textEl, printBtn, msgEl) {
   btn.disabled = true;
-  boxEl.classList.add("hidden");
+  textEl.classList.add("hidden");
+  printBtn.classList.add("hidden");
   showMsg(msgEl, "俳句を作っています…", "info");
   try {
     const base64 = canvasToBase64Png(canvas);
@@ -1017,8 +1020,9 @@ async function requestHaiku(canvas, btn, boxEl, msgEl) {
     const body = await r.text();
     if (!r.ok) throw new Error(body);
     const haiku = JSON.parse(body).haiku;
-    boxEl.textContent = haiku;
-    boxEl.classList.remove("hidden");
+    textEl.value = haiku; // editable from here — printHaikuFromText() reads the live value, not this response
+    textEl.classList.remove("hidden");
+    printBtn.classList.remove("hidden");
     msgEl.className = "msg";
   } catch (e) {
     showMsg(msgEl, "俳句の生成に失敗しました: " + e.message, "err");
@@ -1028,11 +1032,143 @@ async function requestHaiku(canvas, btn, boxEl, msgEl) {
 }
 
 $("camHaikuBtn").addEventListener("click", () => {
-  requestHaiku($("camPreviewCanvas"), $("camHaikuBtn"), $("camHaikuBox"), $("camHaikuMsg"));
+  requestHaiku($("camPreviewCanvas"), $("camHaikuBtn"), $("camHaikuText"), $("camHaikuPrintBtn"), $("camHaikuMsg"));
 });
 
 $("uploadHaikuBtn").addEventListener("click", () => {
-  requestHaiku($("previewCanvas"), $("uploadHaikuBtn"), $("uploadHaikuBox"), $("uploadHaikuMsg"));
+  requestHaiku($("previewCanvas"), $("uploadHaikuBtn"), $("uploadHaikuText"), $("uploadHaikuPrintBtn"), $("uploadHaikuMsg"));
+});
+
+// ---------- haiku print (vertical, old-fashioned brush-style layout) ----------
+
+// True calligraphy brush fonts aren't bundled (this page stays a single
+// dependency-free file — see README), so this is a best-effort font stack:
+// genuine running-script fonts where the OS happens to have one (mostly
+// Windows), falling back to an elegant mincho serif everywhere else. Either
+// way it prints through the same threshold-dither path as a photo, so the
+// exact typeface matters less than the vertical 2-column layout itself.
+const HAIKU_FONT_STACK =
+  '"HGP行書体", "HG行書体", "HGS行書体", "Klee", "Yuppy TC", "Hiragino Mincho ProN", "Yu Mincho", serif';
+
+// Splits haiku text into two columns for 縦書き (top-to-bottom, right-to-
+// left) printing: the textarea's own line breaks (typically the 5/7/5
+// phrases) decide the split when there are 2+ lines — the first half of the
+// lines becomes the right-hand column (read first), the rest the left-hand
+// column — so a 3-line haiku naturally becomes "line1+line2" / "line3".
+// Falls back to splitting a single line in half by character count if the
+// user removed all line breaks while editing.
+function splitHaikuForVertical(text) {
+  const lines = text.split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
+  if (lines.length >= 2) {
+    const cut = Math.ceil(lines.length / 2);
+    return [lines.slice(0, cut).join(""), lines.slice(cut).join("")];
+  }
+  const whole = lines[0] || text.trim();
+  const mid = Math.ceil(whole.length / 2);
+  return [whole.slice(0, mid), whole.slice(mid)];
+}
+
+// Renders `text` as a two-column vertical composition sized to the
+// printer's fixed 384-dot width, with a plain double-line frame for a bit
+// of tanzaku-strip flavor. Long vowel marks ("ー") are rotated 90° since a
+// horizontal one reads as an obvious mistake in vertical text; small-kana
+// shifting and vertical punctuation forms are not attempted (a real
+// typesetting pass is out of scope here — see HAIKU_FONT_STACK's comment).
+function renderVerticalHaikuCanvas(text) {
+  const [rightCol, leftCol] = splitHaikuForVertical(text);
+  const cell = 108; // dot size of each (roughly square) character cell
+  const margin = 28;
+  const gap = 24;
+  const rows = Math.max(rightCol.length, leftCol.length, 1);
+
+  const w = PRINT_WIDTH;
+  const h = margin * 2 + rows * cell;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(8, 8, w - 16, h - 16);
+  ctx.lineWidth = 1;
+  ctx.strokeRect(15, 15, w - 30, h - 30);
+
+  ctx.fillStyle = "#000";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = Math.floor(cell * 0.8) + 'px ' + HAIKU_FONT_STACK;
+
+  const colWidth = (w - margin * 2 - gap) / 2;
+  const rightX = w - margin - colWidth / 2; // read first (right, per 縦書き order)
+  const leftX = margin + colWidth / 2; // read second
+  const startY = margin + cell / 2;
+
+  function drawColumn(chars, x) {
+    for (let i = 0; i < chars.length; i++) {
+      const ch = chars[i];
+      const y = startY + i * cell;
+      if (ch === "ー" || ch === "―" || ch === "-") {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.PI / 2);
+        ctx.fillText(ch, 0, 0);
+        ctx.restore();
+      } else {
+        ctx.fillText(ch, x, y);
+      }
+    }
+  }
+
+  drawColumn(rightCol, rightX);
+  drawColumn(leftCol, leftX);
+  return canvas;
+}
+
+async function printHaikuFromText(textEl, btn, msgEl) {
+  const text = textEl.value.trim();
+  if (!text) {
+    showMsg(msgEl, "俳句のテキストが空です", "err");
+    return;
+  }
+  btn.disabled = true;
+  showMsg(msgEl, "印刷用の画像を作っています…", "info");
+  try {
+    const canvas = renderVerticalHaikuCanvas(text);
+    const w = canvas.width;
+    let h = canvas.height;
+    if (h > maxHeightDots) h = maxHeightDots; // safety clamp; a real haiku never gets close to this
+
+    const ctx = canvas.getContext("2d");
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const gray = toGrayscale(imageData, 0, 0, false);
+    const bin = ditherThreshold(gray, w, h); // plain black/white text — no dithering needed
+    const packed = packBits(bin, w, h);
+
+    showMsg(msgEl, "送信中…", "info");
+    const beginRes = await fetch("/api/print/image/begin", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `w=${w}&h=${h}`,
+    });
+    if (!beginRes.ok) throw new Error(await beginRes.text());
+    await uploadBytes(packed);
+    showMsg(msgEl, "印刷しました", "ok");
+  } catch (e) {
+    showMsg(msgEl, "印刷に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("camHaikuPrintBtn").addEventListener("click", () => {
+  printHaikuFromText($("camHaikuText"), $("camHaikuPrintBtn"), $("camHaikuMsg"));
+});
+
+$("uploadHaikuPrintBtn").addEventListener("click", () => {
+  printHaikuFromText($("uploadHaikuText"), $("uploadHaikuPrintBtn"), $("uploadHaikuMsg"));
 });
 
 // ---------- gallery ----------
