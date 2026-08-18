@@ -9,6 +9,7 @@
 #include "clock.h"
 #include "gallery.h"
 #include "led.h"
+#include "openai.h"
 #include "printer.h"
 #include "wifi_manager.h"
 
@@ -44,13 +45,21 @@ void sendPlain(int code, const String &body) {
 }
 
 // Minimal JSON string escaping for text that ultimately originates off-board
-// (the M5StickV's detection label, over UART) — keeps a stray quote or
-// backslash from producing invalid JSON on the status/gallery endpoints.
+// (the M5StickV's detection label over UART, an OpenAI-generated haiku) —
+// keeps a stray quote, backslash, or newline from producing invalid JSON on
+// the status/gallery/haiku endpoints. Newlines are escaped rather than
+// dropped since a haiku is naturally multi-line.
 String jsonEscape(const char *s) {
     String out;
     for (const char *p = s; *p; p++) {
-        if (*p == '"' || *p == '\\') out += '\\';
-        if ((unsigned char)*p >= 0x20) out += *p;
+        if (*p == '"' || *p == '\\') {
+            out += '\\';
+            out += *p;
+        } else if (*p == '\n') {
+            out += "\\n";
+        } else if ((unsigned char)*p >= 0x20) {
+            out += *p;
+        }
     }
     return out;
 }
@@ -400,6 +409,37 @@ void handleM5PaperSettingsSet() {
     sendPlain(200, "OK");
 }
 
+void handleOpenAISettingsGet() {
+    String json = "{\"configured\":" + String(OpenAI::hasKey() ? "true" : "false") + "}";
+    server.send(200, "application/json", json);
+}
+
+void handleOpenAISettingsSet() {
+    if (!server.hasArg("apiKey")) {
+        sendPlain(400, "apiKey required");
+        return;
+    }
+    OpenAI::setKey(server.arg("apiKey"));
+    sendPlain(200, "OK");
+}
+
+// Body is the raw base64 of a PNG (no "data:image/png;base64," prefix —
+// the browser strips that before sending, see data/index.html), posted as
+// application/x-www-form-urlencoded's `image` field like every other
+// text-bearing POST in this file (e.g. handlePrintText()).
+void handleHaikuGenerate() {
+    if (!server.hasArg("image") || server.arg("image").length() == 0) {
+        sendPlain(400, "image required");
+        return;
+    }
+    String haiku, err;
+    if (!OpenAI::generateHaiku(server.arg("image"), haiku, err)) {
+        sendPlain(400, err);
+        return;
+    }
+    server.send(200, "application/json", "{\"haiku\":\"" + jsonEscape(haiku.c_str()) + "\"}");
+}
+
 }  // namespace
 
 void begin() {
@@ -434,6 +474,9 @@ void begin() {
     server.on("/api/gallery/delete", HTTP_POST, handleGalleryDelete);
     server.on("/api/m5paper/settings", HTTP_GET, handleM5PaperSettingsGet);
     server.on("/api/m5paper/settings", HTTP_POST, handleM5PaperSettingsSet);
+    server.on("/api/openai/settings", HTTP_GET, handleOpenAISettingsGet);
+    server.on("/api/openai/settings", HTTP_POST, handleOpenAISettingsSet);
+    server.on("/api/haiku", HTTP_POST, handleHaikuGenerate);
 
     server.begin();
 }

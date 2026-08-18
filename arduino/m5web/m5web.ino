@@ -18,6 +18,7 @@
 #include "camera_link.h"
 #include "gallery.h"
 #include "led.h"
+#include "openai.h"
 #include "printer.h"
 #include "web_server.h"
 #include "wifi_manager.h"
@@ -90,6 +91,7 @@ void setup() {
     Led::begin();
     Gallery::begin();  // reports pre-existing saved photos to Led on begin()
     CameraLink::begin();
+    OpenAI::begin();
     WifiManager::begin();
     WebServer_::begin();
     Serial.println("=== m5web ready ===");

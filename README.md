@@ -80,12 +80,14 @@ Wi-Fi設定をやり直したい場合は、ATOM本体のボタンを5秒以上�
 - **M5StickVカメラ**: UART直結したM5StickVで撮った写真を確認・印刷する（詳細は
   [M5StickVカメラ連携](#m5stickvカメラ連携)）。「回転」ボタンを押すとその場で保存済みの
   フレームを90°時計回りに回転（384dot幅へリスケールし直すため、押すたびに何度でも回転できる）
-  でき、以後の印刷・再印刷にそのまま反映される。
+  でき、以後の印刷・再印刷にそのまま反映される。「俳句を作る」ボタンで表示中の写真から
+  俳句を生成できる（詳細は[俳句生成](#俳句生成openai連携)）。
 - **画像を印刷**: 写真を選択すると自動的に印刷幅（384dot=58mm幅, 203dpi）に合わせてリサイズし、
   誤差拡散（Floyd–Steinberg）・網掛け・単純2値化のいずれかで白黒ビットマップに変換する。
   明るさ・コントラストは設定タブの「デフォルト」値から始まり、写真ごとに個別調整もできる。
   反転・90°回転にも対応。プレビューを確認してから「この画像を印刷」を押す。
   変換はすべてブラウザ側（Canvas）で行われるため、ATOM側の負荷やメモリ消費は最小限。
+  ここにも「俳句を作る」ボタンがあり、選択中の写真から俳句を生成できる。
 - **ギャラリー**: M5StickVカメラで撮った写真・アップロードした写真は、印刷時に自動的に
   ATOM Lite本体のフラッシュ（LittleFS）にも保存され、「ギャラリー」カードに一覧表示される。
   各写真はサムネイルと（あれば）検出ラベル・保存日付を表示のうえ「再印刷」「削除」ができる。
@@ -120,6 +122,10 @@ Wi-Fi設定をやり直したい場合は、ATOM本体のボタンを5秒以上�
   成功すればそのまま新しいネットワークで動作し、失敗すれば自動でAP設定モードに戻るため、
   誤ったパスワードを入れても本機にアクセスできなくなることはない。接続中のSSIDは開いた
   時点で自動的に入力欄へプリセットされる（パスワードは保存されないため毎回入力が必要）。
+- **OpenAI設定**: 「俳句を作る」ボタン（詳細は[俳句生成](#俳句生成openai連携)）が使う
+  OpenAI APIキーを登録する。ATOM Lite本体のNVSに保存され再起動後も保持されるが、
+  Wi-Fiパスワードと同様に**一度保存すると値は再表示されない**（設定済みかどうかのバッジ
+  表示のみ）。
 
 ## M5StickVカメラ連携
 
@@ -395,6 +401,31 @@ docs.m5stack.com/en/arduino/papercolor/program・.../buttonを根拠に実装）
   クリーンな遷移と`WiFi.setSleep(false)`を入れてある。それでも改善しない場合は本体を再起動して
   再試行すること。
 
+## 俳句生成（OpenAI連携）
+
+プリントタブの「M5StickVカメラ」カード・「画像を印刷」カード、どちらにも「俳句を作る」
+ボタンがあり、表示中の写真から季語入りの五七五俳句をその場で生成できる。
+
+- **画像処理はすべてブラウザ側で完結**: どちらの写真も、ブラウザは既にプレビュー用の
+  `<canvas>`に描画済み（M5StickVカメラは1bppビットマップの展開、写真アップロードは
+  ディザリング後のプレビュー）なので、ボタンを押すとその`canvas.toDataURL("image/png")`を
+  そのままOpenAIへ送る画像として使う。ATOM Lite側で新たに画像を作り直したり、
+  PNGエンコードしたりする処理は一切ない。
+- **OpenAIへのリクエストはATOM Liteが中継する**（`POST /api/haiku`）。ブラウザは
+  base64のPNGを送るだけで、実際にOpenAIのAPIキーを使ってHTTPSでOpenAIと通信するのは
+  ATOM Lite側（`src/openai.cpp`）——ブラウザ側のJavaScriptやネットワークタブに
+  APIキーが露出することはない。証明書のピン留めはしておらず（`WiFiClientSecure::setInsecure()`）、
+  本プロジェクト全体の「同一LAN内の信頼できる利用者だけを想定し、認証は設けない」という
+  既存のセキュリティ方針に合わせた簡略化——通信自体はTLSで暗号化されるが、サーバー証明書の
+  検証はしていない。
+- 使用モデルは`src/openai.cpp`の`kModel`（既定は`gpt-4o-mini`）。OpenAI側でモデルが
+  廃止された場合はここを書き換える。
+- 生成された俳句はその場で画面に表示されるだけで、印刷や保存はしない（必要なら「Put TEXT
+  for print」カードにコピー＆ペーストして印刷できる）。
+- OpenAI APIの利用には課金が発生する場合がある点に注意。APIキーは
+  [platform.openai.com](https://platform.openai.com/api-keys)で発行し、設定タブの
+  「OpenAI設定」カードに登録する。
+
 ## 制限事項
 
 - 印刷幅は58mmヘッド固定の384dot。
@@ -420,6 +451,8 @@ src/
   font.*               5x7ドットマトリクスフォント（半角英数字のみ）の描画
   caption.*            fontを使って印刷時刻・検出ラベルを印刷画像に追加する（白帯+黒文字）
   clock.*              NTPによる時刻同期（JST固定）。captionの時刻表示・ギャラリーの保存日付に使用
+  openai.*              OpenAI Chat Completions APIへのHTTPSクライアント（俳句生成、詳細は
+                         [俳句生成](#俳句生成openai連携)）
 data/
   index.html          m5web本体（UI + Canvas画像変換, 外部CDN依存なし・単一ファイル）
 arduino/m5web/
@@ -461,6 +494,9 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/gallery/delete` | `id` (query) で指定した写真をLittleFSから削除 |
 | GET | `/api/m5paper/settings` | M5Paperのギャラリー更新設定JSON (`autoRefresh`,`pollIntervalMs`) |
 | POST | `/api/m5paper/settings` | `autoRefresh` (`0`/`1`), `pollIntervalMs` (form) でM5Paperの更新方式を設定（再起動後も保持） |
+| GET | `/api/openai/settings` | OpenAI APIキーの設定状態JSON (`configured`、キー自体は返さない) |
+| POST | `/api/openai/settings` | `apiKey` (form) でOpenAI APIキーを設定（再起動後も保持、空文字で削除） |
+| POST | `/api/haiku` | `image` (form, data URLのprefixを除いたbase64 PNG) から俳句を生成してJSON (`haiku`) で返す |
 
 ### curl例
 

@@ -101,6 +101,12 @@
     display: inline-flex; align-self: center; margin: 8px 0 0; font-size: 12px; font-weight: 600;
     color: var(--accent); background: rgba(61,139,253,.15); padding: 4px 10px; border-radius: 20px;
   }
+  .haiku-box {
+    margin-top: 10px; padding: 14px 16px; border-radius: 10px;
+    background: #1b1c20; border: 1px solid var(--border);
+    font-size: 16px; line-height: 1.7; white-space: pre-wrap;
+    text-align: center; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+  }
 </style>
 </head>
 <body>
@@ -148,10 +154,14 @@
       <p class="detect-label hidden" id="camLabel"></p>
       <p class="meta" id="camMeta">まだ写真がありません</p>
       <div class="btn-row hidden" id="camActions">
+        <button class="secondary" id="camRotateBtn">回転</button>
         <button class="primary" id="camPrintBtn">印刷</button>
         <button class="secondary hidden" id="camDiscardBtn">破棄</button>
       </div>
       <div class="msg" id="camMsg"></div>
+      <button class="secondary full hidden" id="camHaikuBtn" style="margin-top:8px">俳句を作る</button>
+      <div class="haiku-box hidden" id="camHaikuBox"></div>
+      <div class="msg" id="camHaikuMsg"></div>
     </div>
 
     <div class="card">
@@ -190,6 +200,9 @@
         <button class="primary full" id="printImageBtn" style="margin-top:8px">この画像を印刷</button>
         <progress id="imageProgress" max="100" value="0"></progress>
         <div class="msg" id="imageMsg"></div>
+        <button class="secondary full" id="uploadHaikuBtn" style="margin-top:8px">俳句を作る</button>
+        <div class="haiku-box hidden" id="uploadHaikuBox"></div>
+        <div class="msg" id="uploadHaikuMsg"></div>
       </div>
     </div>
 
@@ -229,7 +242,7 @@
     </div>
 
     <div class="card">
-      <h2>M5StickV印刷モード</h2>
+      <h2>M5StickV設定</h2>
       <div class="radio-line">
         <input type="radio" name="camMode" id="camModeAuto" value="auto">
         <label for="camModeAuto" style="margin:0;color:var(--text)">事後閲覧方式（自動印刷→あとで確認）</label>
@@ -239,6 +252,27 @@
         <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷）</label>
       </div>
       <p class="meta">ウェブ上に表示された後に印刷ボタンを押すか、ATOMのボタンを押して印刷。</p>
+      <label>写真の回転（次に受信するフレームから適用）</label>
+      <button type="button" class="secondary full" id="camDefaultRotateBtn">回転（現在: <span id="camDefaultRotateVal">0</span>°）</button>
+      <p class="meta">押すたびに時計回りに90°ずつ回転します。すでに受信・表示中の1枚には遡って反映されません。</p>
+    </div>
+
+    <div class="card">
+      <h2>M5Paper設定</h2>
+      <div class="radio-line">
+        <input type="radio" name="m5paperAuto" id="m5paperAutoOff" value="off" checked>
+        <label for="m5paperAutoOff" style="margin:0;color:var(--text)">自動更新無し（デフォルト）</label>
+      </div>
+      <div class="radio-line">
+        <input type="radio" name="m5paperAuto" id="m5paperAutoOn" value="on">
+        <label for="m5paperAutoOn" style="margin:0;color:var(--text)">自動更新有り</label>
+      </div>
+      <div id="m5paperIntervalWrap" class="hidden">
+        <label>画像の更新タイミング（秒）</label>
+        <input type="text" inputmode="decimal" id="m5paperPollInterval" placeholder="1">
+      </div>
+      <p class="meta">自動更新無しの場合、M5Paper本体のボタンを押した時にギャラリーが更新されます。</p>
+      <div class="msg" id="m5paperMsg"></div>
     </div>
 
     <div class="card">
@@ -252,6 +286,19 @@
       <button class="primary full" id="settingsWifiSaveBtn" style="margin-top:12px">保存</button>
       <div class="msg" id="settingsWifiMsg"></div>
       <p class="meta">接続後は同じWi-Fi内の端末から <b>http://m5web.local</b> にアクセスしてください。</p>
+    </div>
+
+    <div class="card">
+      <h2>OpenAI設定</h2>
+      <p class="meta">「俳句を作る」ボタン（プリントタブ）でOpenAIの画像認識モデルを使うためのAPIキーです。
+      <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com</a>
+      で発行できます。ATOM Lite本体のNVSに保存され、一度保存すると再表示はされません
+      （Wi-Fiパスワードと同じ扱いです）。</p>
+      <span class="badge" id="openaiStatusBadge"><span class="dot" id="openaiStatusDot"></span><span id="openaiStatusText">確認中…</span></span>
+      <label style="margin-top:12px">APIキー</label>
+      <input type="password" id="openaiApiKey" placeholder="sk-...">
+      <button class="primary full" id="openaiSaveBtn" style="margin-top:12px">保存</button>
+      <div class="msg" id="openaiMsg"></div>
     </div>
   </div>
 
@@ -718,6 +765,7 @@ async function refreshCameraStatus() {
 
     const modeEl = document.getElementById(s.mode === "preview" ? "camModePreview" : "camModeAuto");
     modeEl.checked = true;
+    $("camDefaultRotateVal").textContent = s.rotationDeg;
 
     if (!settingsLoaded) {
       settingsLoaded = true;
@@ -731,10 +779,12 @@ async function refreshCameraStatus() {
       $("camActions").classList.add("hidden");
       $("camLabel").classList.add("hidden");
       $("camMeta").textContent = "まだ写真がありません";
+      $("camHaikuBtn").classList.add("hidden");
       return;
     }
 
     $("camActions").classList.remove("hidden");
+    $("camHaikuBtn").classList.remove("hidden");
     $("camDiscardBtn").classList.toggle("hidden", !s.pendingPrint);
     $("camPrintBtn").textContent = s.pendingPrint ? "印刷" : "もう一度印刷";
     $("camMeta").textContent = s.pendingPrint
@@ -768,6 +818,19 @@ document.querySelectorAll('input[name="camMode"]').forEach((el) => {
   });
 });
 
+$("camDefaultRotateBtn").addEventListener("click", async () => {
+  const btn = $("camDefaultRotateBtn");
+  btn.disabled = true;
+  try {
+    await fetch("/api/camera/rotate-default", { method: "POST" });
+    await refreshCameraStatus(); // reflect the new value right away, don't wait for the next poll
+  } catch (err) {
+    /* ignore; next status poll will resync the displayed value */
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 async function saveDefaultAdjust() {
   try {
     await fetch("/api/camera/settings", {
@@ -788,6 +851,20 @@ $("defaultContrast").addEventListener("input", () => {
 });
 $("defaultBrightness").addEventListener("change", saveDefaultAdjust);
 $("defaultContrast").addEventListener("change", saveDefaultAdjust);
+
+$("camRotateBtn").addEventListener("click", async () => {
+  const msg = $("camMsg");
+  $("camRotateBtn").disabled = true;
+  try {
+    const r = await fetch("/api/camera/rotate", { method: "POST" });
+    if (!r.ok) throw new Error(await r.text());
+    await refreshCameraStatus(); // reload the rotated frame right away, don't wait for the next poll
+  } catch (e) {
+    showMsg(msg, "回転に失敗しました: " + e.message, "err");
+  } finally {
+    $("camRotateBtn").disabled = false;
+  }
+});
 
 $("camPrintBtn").addEventListener("click", async () => {
   const msg = $("camMsg");
@@ -814,6 +891,149 @@ $("camDiscardBtn").addEventListener("click", async () => {
 
 refreshCameraStatus();
 setInterval(refreshCameraStatus, 3000);
+
+// ---------- M5Paper settings ----------
+
+let m5paperSettingsLoaded = false;
+
+function updateM5paperIntervalVisibility() {
+  $("m5paperIntervalWrap").classList.toggle("hidden", !$("m5paperAutoOn").checked);
+}
+
+async function refreshM5PaperSettings() {
+  if (m5paperSettingsLoaded) return; // only prefill once; don't clobber in-progress edits
+  try {
+    const r = await fetch("/api/m5paper/settings");
+    const s = await r.json();
+    m5paperSettingsLoaded = true;
+    $(s.autoRefresh ? "m5paperAutoOn" : "m5paperAutoOff").checked = true;
+    $("m5paperPollInterval").value = (s.pollIntervalMs || 1000) / 1000;
+    updateM5paperIntervalVisibility();
+  } catch (e) {
+    // transient network error; leave the fields as-is and try again next poll
+  }
+}
+
+async function saveM5PaperSettings() {
+  const msg = $("m5paperMsg");
+  const autoRefresh = $("m5paperAutoOn").checked;
+  const seconds = parseFloat($("m5paperPollInterval").value);
+  if (autoRefresh && (!isFinite(seconds) || seconds <= 0)) {
+    showMsg(msg, "正の数を入力してください", "err");
+    return;
+  }
+  const pollIntervalMs = isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 1000;
+  try {
+    const r = await fetch("/api/m5paper/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "autoRefresh=" + (autoRefresh ? "1" : "0") + "&pollIntervalMs=" + pollIntervalMs,
+    });
+    if (!r.ok) throw new Error(await r.text());
+    showMsg(msg, "保存しました", "ok");
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  }
+}
+
+document.querySelectorAll('input[name="m5paperAuto"]').forEach((el) => {
+  el.addEventListener("change", () => {
+    updateM5paperIntervalVisibility();
+    saveM5PaperSettings();
+  });
+});
+$("m5paperPollInterval").addEventListener("change", saveM5PaperSettings);
+
+refreshM5PaperSettings();
+setInterval(refreshM5PaperSettings, 4000);
+
+// ---------- OpenAI settings ----------
+
+async function refreshOpenAIStatus() {
+  const dot = $("openaiStatusDot");
+  const text = $("openaiStatusText");
+  try {
+    const r = await fetch("/api/openai/settings");
+    const s = await r.json();
+    dot.className = "dot " + (s.configured ? "ok" : "warn");
+    text.textContent = s.configured ? "設定済み" : "未設定";
+  } catch (e) {
+    dot.className = "dot";
+    text.textContent = "通信エラー";
+  }
+}
+
+$("openaiSaveBtn").addEventListener("click", async () => {
+  const input = $("openaiApiKey");
+  const msg = $("openaiMsg");
+  const key = input.value.trim();
+  if (!key) {
+    showMsg(msg, "APIキーを入力してください", "err");
+    return;
+  }
+  $("openaiSaveBtn").disabled = true;
+  try {
+    const r = await fetch("/api/openai/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "apiKey=" + encodeURIComponent(key),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    input.value = ""; // write-only, same as the Wi-Fi password field — never re-shown
+    showMsg(msg, "保存しました", "ok");
+    refreshOpenAIStatus();
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  } finally {
+    $("openaiSaveBtn").disabled = false;
+  }
+});
+
+refreshOpenAIStatus();
+setInterval(refreshOpenAIStatus, 5000);
+
+// ---------- haiku generation ----------
+
+// Strips the "data:image/png;base64," prefix toDataURL() adds — the server
+// always treats the body as a raw base64 PNG (see web_server.cpp's
+// handleHaikuGenerate()), so there's no need to send the prefix at all.
+function canvasToBase64Png(canvas) {
+  const dataUrl = canvas.toDataURL("image/png");
+  const comma = dataUrl.indexOf(",");
+  return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+}
+
+async function requestHaiku(canvas, btn, boxEl, msgEl) {
+  btn.disabled = true;
+  boxEl.classList.add("hidden");
+  showMsg(msgEl, "俳句を作っています…", "info");
+  try {
+    const base64 = canvasToBase64Png(canvas);
+    const r = await fetch("/api/haiku", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "image=" + encodeURIComponent(base64),
+    });
+    const body = await r.text();
+    if (!r.ok) throw new Error(body);
+    const haiku = JSON.parse(body).haiku;
+    boxEl.textContent = haiku;
+    boxEl.classList.remove("hidden");
+    msgEl.className = "msg";
+  } catch (e) {
+    showMsg(msgEl, "俳句の生成に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("camHaikuBtn").addEventListener("click", () => {
+  requestHaiku($("camPreviewCanvas"), $("camHaikuBtn"), $("camHaikuBox"), $("camHaikuMsg"));
+});
+
+$("uploadHaikuBtn").addEventListener("click", () => {
+  requestHaiku($("previewCanvas"), $("uploadHaikuBtn"), $("uploadHaikuBox"), $("uploadHaikuMsg"));
+});
 
 // ---------- gallery ----------
 

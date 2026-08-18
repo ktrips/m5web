@@ -44,6 +44,7 @@ struct Status {
     uint32_t frameSeq;   // increments each time a new frame is stored
     int8_t brightness;   // default adjustment applied to future frames, -100..100
     int8_t contrast;     // default adjustment applied to future frames, -100..100
+    uint16_t rotationDeg;  // default rotation applied to future frames, one of 0/90/180/270
     char label[kMaxLabelLen + 1];  // "" if nothing was detected
 };
 
@@ -61,6 +62,14 @@ void setMode(Mode m);  // persisted across reboots
 // caller gets clamped rather than silently wrapping around.
 void setAdjust(int brightness, int contrast);
 
+// Default rotation (0/90/180/270, wraps) applied to every frame *received*
+// from this point on — like setAdjust(), never retroactive to an
+// already-buffered/pending frame. Each call adds another 90° clockwise on
+// top of the current default, persisted across reboots. Distinct from
+// rotate() below, which rotates the currently-held frame immediately
+// (used for one-off adjustment of a photo right before printing it).
+void rotateDefaultBy90();
+
 Status status();
 
 // Prints the last stored frame — the currently-pending one in preview
@@ -72,6 +81,17 @@ bool printLastFrame();
 
 // Preview mode only: drop the currently pending frame without printing it.
 void discardPending();
+
+// Rotates the last stored frame 90° clockwise, in place. A received frame
+// is always exactly kPrintWidthDots wide (see the wire protocol above), so
+// a plain rotate would leave it kPrintWidthDots *tall* instead — not
+// printable (Printer::beginRaster requires exactly kPrintWidthDots wide).
+// Rescaled back to kPrintWidthDots wide (aspect-preserving, nearest-
+// neighbor) so the result stays printable, same as every other stored
+// frame; repeatable — each call adds another 90° on top of the last.
+// Returns false (no-op) if no frame has arrived yet. Bumps frameSeq so the
+// web UI's next poll picks up the new image/dimensions.
+bool rotate();
 
 // Raw packed 1bpp bitmap (MSB-first, 1=black) of the last stored frame, for
 // serving to the web UI. nullptr/0 if no frame has arrived yet.

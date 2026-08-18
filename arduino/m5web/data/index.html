@@ -101,6 +101,12 @@
     display: inline-flex; align-self: center; margin: 8px 0 0; font-size: 12px; font-weight: 600;
     color: var(--accent); background: rgba(61,139,253,.15); padding: 4px 10px; border-radius: 20px;
   }
+  .haiku-box {
+    margin-top: 10px; padding: 14px 16px; border-radius: 10px;
+    background: #1b1c20; border: 1px solid var(--border);
+    font-size: 16px; line-height: 1.7; white-space: pre-wrap;
+    text-align: center; font-family: "Hiragino Mincho ProN", "Yu Mincho", serif;
+  }
 </style>
 </head>
 <body>
@@ -153,6 +159,9 @@
         <button class="secondary hidden" id="camDiscardBtn">破棄</button>
       </div>
       <div class="msg" id="camMsg"></div>
+      <button class="secondary full hidden" id="camHaikuBtn" style="margin-top:8px">俳句を作る</button>
+      <div class="haiku-box hidden" id="camHaikuBox"></div>
+      <div class="msg" id="camHaikuMsg"></div>
     </div>
 
     <div class="card">
@@ -191,6 +200,9 @@
         <button class="primary full" id="printImageBtn" style="margin-top:8px">この画像を印刷</button>
         <progress id="imageProgress" max="100" value="0"></progress>
         <div class="msg" id="imageMsg"></div>
+        <button class="secondary full" id="uploadHaikuBtn" style="margin-top:8px">俳句を作る</button>
+        <div class="haiku-box hidden" id="uploadHaikuBox"></div>
+        <div class="msg" id="uploadHaikuMsg"></div>
       </div>
     </div>
 
@@ -274,6 +286,19 @@
       <button class="primary full" id="settingsWifiSaveBtn" style="margin-top:12px">保存</button>
       <div class="msg" id="settingsWifiMsg"></div>
       <p class="meta">接続後は同じWi-Fi内の端末から <b>http://m5web.local</b> にアクセスしてください。</p>
+    </div>
+
+    <div class="card">
+      <h2>OpenAI設定</h2>
+      <p class="meta">「俳句を作る」ボタン（プリントタブ）でOpenAIの画像認識モデルを使うためのAPIキーです。
+      <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com</a>
+      で発行できます。ATOM Lite本体のNVSに保存され、一度保存すると再表示はされません
+      （Wi-Fiパスワードと同じ扱いです）。</p>
+      <span class="badge" id="openaiStatusBadge"><span class="dot" id="openaiStatusDot"></span><span id="openaiStatusText">確認中…</span></span>
+      <label style="margin-top:12px">APIキー</label>
+      <input type="password" id="openaiApiKey" placeholder="sk-...">
+      <button class="primary full" id="openaiSaveBtn" style="margin-top:12px">保存</button>
+      <div class="msg" id="openaiMsg"></div>
     </div>
   </div>
 
@@ -754,10 +779,12 @@ async function refreshCameraStatus() {
       $("camActions").classList.add("hidden");
       $("camLabel").classList.add("hidden");
       $("camMeta").textContent = "まだ写真がありません";
+      $("camHaikuBtn").classList.add("hidden");
       return;
     }
 
     $("camActions").classList.remove("hidden");
+    $("camHaikuBtn").classList.remove("hidden");
     $("camDiscardBtn").classList.toggle("hidden", !s.pendingPrint);
     $("camPrintBtn").textContent = s.pendingPrint ? "印刷" : "もう一度印刷";
     $("camMeta").textContent = s.pendingPrint
@@ -919,6 +946,94 @@ $("m5paperPollInterval").addEventListener("change", saveM5PaperSettings);
 
 refreshM5PaperSettings();
 setInterval(refreshM5PaperSettings, 4000);
+
+// ---------- OpenAI settings ----------
+
+async function refreshOpenAIStatus() {
+  const dot = $("openaiStatusDot");
+  const text = $("openaiStatusText");
+  try {
+    const r = await fetch("/api/openai/settings");
+    const s = await r.json();
+    dot.className = "dot " + (s.configured ? "ok" : "warn");
+    text.textContent = s.configured ? "設定済み" : "未設定";
+  } catch (e) {
+    dot.className = "dot";
+    text.textContent = "通信エラー";
+  }
+}
+
+$("openaiSaveBtn").addEventListener("click", async () => {
+  const input = $("openaiApiKey");
+  const msg = $("openaiMsg");
+  const key = input.value.trim();
+  if (!key) {
+    showMsg(msg, "APIキーを入力してください", "err");
+    return;
+  }
+  $("openaiSaveBtn").disabled = true;
+  try {
+    const r = await fetch("/api/openai/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "apiKey=" + encodeURIComponent(key),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    input.value = ""; // write-only, same as the Wi-Fi password field — never re-shown
+    showMsg(msg, "保存しました", "ok");
+    refreshOpenAIStatus();
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  } finally {
+    $("openaiSaveBtn").disabled = false;
+  }
+});
+
+refreshOpenAIStatus();
+setInterval(refreshOpenAIStatus, 5000);
+
+// ---------- haiku generation ----------
+
+// Strips the "data:image/png;base64," prefix toDataURL() adds — the server
+// always treats the body as a raw base64 PNG (see web_server.cpp's
+// handleHaikuGenerate()), so there's no need to send the prefix at all.
+function canvasToBase64Png(canvas) {
+  const dataUrl = canvas.toDataURL("image/png");
+  const comma = dataUrl.indexOf(",");
+  return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+}
+
+async function requestHaiku(canvas, btn, boxEl, msgEl) {
+  btn.disabled = true;
+  boxEl.classList.add("hidden");
+  showMsg(msgEl, "俳句を作っています…", "info");
+  try {
+    const base64 = canvasToBase64Png(canvas);
+    const r = await fetch("/api/haiku", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "image=" + encodeURIComponent(base64),
+    });
+    const body = await r.text();
+    if (!r.ok) throw new Error(body);
+    const haiku = JSON.parse(body).haiku;
+    boxEl.textContent = haiku;
+    boxEl.classList.remove("hidden");
+    msgEl.className = "msg";
+  } catch (e) {
+    showMsg(msgEl, "俳句の生成に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("camHaikuBtn").addEventListener("click", () => {
+  requestHaiku($("camPreviewCanvas"), $("camHaikuBtn"), $("camHaikuBox"), $("camHaikuMsg"));
+});
+
+$("uploadHaikuBtn").addEventListener("click", () => {
+  requestHaiku($("previewCanvas"), $("uploadHaikuBtn"), $("uploadHaikuBox"), $("uploadHaikuMsg"));
+});
 
 // ---------- gallery ----------
 

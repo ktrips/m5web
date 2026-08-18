@@ -1,6 +1,7 @@
 #include "web_server.h"
 
 #include <LittleFS.h>
+#include <Preferences.h>
 #include <WebServer.h>
 
 #include "camera_link.h"
@@ -8,6 +9,7 @@
 #include "clock.h"
 #include "gallery.h"
 #include "led.h"
+#include "openai.h"
 #include "printer.h"
 #include "wifi_manager.h"
 
@@ -18,7 +20,19 @@ namespace {
 constexpr uint16_t kMaxHeightDots = 2000;  // ~250mm; keeps jobs to a sane length
 constexpr size_t kMaxQrLength = 300;  // sanity cap; printer's symbol buffer is limited
 
+// When autoRefresh is on, M5Paper polls /api/gallery on this interval to
+// notice new/removed photos — see ../m5paper/m5paper.ino's settings poll.
+// autoRefresh defaults to off: M5Paper then only re-syncs the gallery on a
+// button press instead of a timer. Both persisted so they survive a
+// reboot, same pattern as camera_link.cpp's brightness/contrast prefs.
+constexpr unsigned long kDefaultM5PaperPollMs = 1000;
+constexpr unsigned long kMinM5PaperPollMs = 250;
+constexpr unsigned long kMaxM5PaperPollMs = 60000;
+
 WebServer server(80);
+Preferences m5paperPrefs;
+unsigned long m5paperPollMs = kDefaultM5PaperPollMs;
+bool m5paperAutoRefresh = false;
 
 uint16_t pendingWidth = 0;
 uint16_t pendingHeight = 0;
@@ -31,13 +45,21 @@ void sendPlain(int code, const String &body) {
 }
 
 // Minimal JSON string escaping for text that ultimately originates off-board
-// (the M5StickV's detection label, over UART) — keeps a stray quote or
-// backslash from producing invalid JSON on the status/gallery endpoints.
+// (the M5StickV's detection label over UART, an OpenAI-generated haiku) —
+// keeps a stray quote, backslash, or newline from producing invalid JSON on
+// the status/gallery/haiku endpoints. Newlines are escaped rather than
+// dropped since a haiku is naturally multi-line.
 String jsonEscape(const char *s) {
     String out;
     for (const char *p = s; *p; p++) {
-        if (*p == '"' || *p == '\\') out += '\\';
-        if ((unsigned char)*p >= 0x20) out += *p;
+        if (*p == '"' || *p == '\\') {
+            out += '\\';
+            out += *p;
+        } else if (*p == '\n') {
+            out += "\\n";
+        } else if ((unsigned char)*p >= 0x20) {
+            out += *p;
+        }
     }
     return out;
 }
@@ -205,6 +227,7 @@ void handleCameraStatus() {
     json += "\"frameSeq\":" + String(s.frameSeq) + ",";
     json += "\"brightness\":" + String(s.brightness) + ",";
     json += "\"contrast\":" + String(s.contrast) + ",";
+    json += "\"rotationDeg\":" + String(s.rotationDeg) + ",";
     json += "\"label\":\"" + jsonEscape(s.label) + "\"";
     json += "}";
     server.send(200, "application/json", json);
@@ -246,6 +269,21 @@ void handleCameraPrint() {
 void handleCameraDiscard() {
     CameraLink::discardPending();
     Serial.println("[web] camera frame discarded");
+    sendPlain(200, "OK");
+}
+
+void handleCameraRotate() {
+    if (!CameraLink::rotate()) {
+        sendPlain(400, "no camera frame yet");
+        return;
+    }
+    Serial.println("[web] camera frame rotated 90deg CW");
+    sendPlain(200, "OK");
+}
+
+void handleCameraRotateDefault() {
+    CameraLink::rotateDefaultBy90();
+    Serial.println("[web] camera default rotation +90deg");
     sendPlain(200, "OK");
 }
 
@@ -343,10 +381,73 @@ void handleGalleryDelete() {
     sendPlain(200, "OK");
 }
 
+void handleM5PaperSettingsGet() {
+    String json = "{\"autoRefresh\":" + String(m5paperAutoRefresh ? "true" : "false") +
+                  ",\"pollIntervalMs\":" + String(m5paperPollMs) + "}";
+    server.send(200, "application/json", json);
+}
+
+void handleM5PaperSettingsSet() {
+    if (!server.hasArg("pollIntervalMs")) {
+        sendPlain(400, "pollIntervalMs required");
+        return;
+    }
+    long ms = server.arg("pollIntervalMs").toInt();
+    if (ms < (long)kMinM5PaperPollMs || ms > (long)kMaxM5PaperPollMs) {
+        sendPlain(400, "pollIntervalMs must be " + String(kMinM5PaperPollMs) + "-" + String(kMaxM5PaperPollMs));
+        return;
+    }
+    m5paperPollMs = (unsigned long)ms;
+    m5paperPrefs.putULong("pollMs", m5paperPollMs);
+
+    if (server.hasArg("autoRefresh")) {
+        m5paperAutoRefresh = server.arg("autoRefresh").toInt() != 0;
+        m5paperPrefs.putBool("autoRefresh", m5paperAutoRefresh);
+    }
+
+    Serial.printf("[web] m5paper autoRefresh=%d pollIntervalMs=%lu\n", m5paperAutoRefresh, m5paperPollMs);
+    sendPlain(200, "OK");
+}
+
+void handleOpenAISettingsGet() {
+    String json = "{\"configured\":" + String(OpenAI::hasKey() ? "true" : "false") + "}";
+    server.send(200, "application/json", json);
+}
+
+void handleOpenAISettingsSet() {
+    if (!server.hasArg("apiKey")) {
+        sendPlain(400, "apiKey required");
+        return;
+    }
+    OpenAI::setKey(server.arg("apiKey"));
+    sendPlain(200, "OK");
+}
+
+// Body is the raw base64 of a PNG (no "data:image/png;base64," prefix —
+// the browser strips that before sending, see data/index.html), posted as
+// application/x-www-form-urlencoded's `image` field like every other
+// text-bearing POST in this file (e.g. handlePrintText()).
+void handleHaikuGenerate() {
+    if (!server.hasArg("image") || server.arg("image").length() == 0) {
+        sendPlain(400, "image required");
+        return;
+    }
+    String haiku, err;
+    if (!OpenAI::generateHaiku(server.arg("image"), haiku, err)) {
+        sendPlain(400, err);
+        return;
+    }
+    server.send(200, "application/json", "{\"haiku\":\"" + jsonEscape(haiku.c_str()) + "\"}");
+}
+
 }  // namespace
 
 void begin() {
     LittleFS.begin(true);
+
+    m5paperPrefs.begin("m5web_paper", false);
+    m5paperPollMs = m5paperPrefs.getULong("pollMs", kDefaultM5PaperPollMs);
+    m5paperAutoRefresh = m5paperPrefs.getBool("autoRefresh", false);
 
     server.on("/", HTTP_GET, handleRoot);
     server.onNotFound(handleRoot);  // catch-all keeps AP captive-portal probes on the setup page
@@ -364,11 +465,18 @@ void begin() {
     server.on("/api/camera/settings", HTTP_POST, handleCameraSettings);
     server.on("/api/camera/print", HTTP_POST, handleCameraPrint);
     server.on("/api/camera/discard", HTTP_POST, handleCameraDiscard);
+    server.on("/api/camera/rotate", HTTP_POST, handleCameraRotate);
+    server.on("/api/camera/rotate-default", HTTP_POST, handleCameraRotateDefault);
     server.on("/api/camera/frame", HTTP_GET, handleCameraFrame);
     server.on("/api/gallery", HTTP_GET, handleGalleryList);
     server.on("/api/gallery/frame", HTTP_GET, handleGalleryFrame);
     server.on("/api/gallery/print", HTTP_POST, handleGalleryPrint);
     server.on("/api/gallery/delete", HTTP_POST, handleGalleryDelete);
+    server.on("/api/m5paper/settings", HTTP_GET, handleM5PaperSettingsGet);
+    server.on("/api/m5paper/settings", HTTP_POST, handleM5PaperSettingsSet);
+    server.on("/api/openai/settings", HTTP_GET, handleOpenAISettingsGet);
+    server.on("/api/openai/settings", HTTP_POST, handleOpenAISettingsSet);
+    server.on("/api/haiku", HTTP_POST, handleHaikuGenerate);
 
     server.begin();
 }
