@@ -1004,13 +1004,73 @@ setInterval(refreshOpenAIStatus, 5000);
 
 // ---------- haiku generation ----------
 
-// Strips the "data:image/png;base64," prefix toDataURL() adds — the server
-// always treats the body as a raw base64 PNG (see web_server.cpp's
-// handleHaikuGenerate()), so there's no need to send the prefix at all.
-function canvasToBase64Png(canvas) {
-  const dataUrl = canvas.toDataURL("image/png");
-  const comma = dataUrl.indexOf(",");
-  return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+// The OpenAI call runs entirely in the browser rather than on the ATOM
+// Lite. The board (ESP32 PICO-D4, no PSRAM) can't reliably complete a TLS
+// handshake to a CDN-fronted host like api.openai.com while it's also
+// running as a WebServer/WiFi/camera-link stack — mbedTLS's handshake
+// setup needs a contiguous heap block this board couldn't consistently
+// produce, even after image downscaling, connect-timeout tuning, and
+// deferring the call out of the upload request (see git history for the
+// debugging that led here: it kept failing at progressively earlier
+// mbedTLS allocation points no matter what was tried). The browser has
+// none of those constraints, so it fetches the key from GET
+// /api/openai/settings (see web_server.cpp's handleOpenAISettingsGet())
+// and talks to OpenAI directly — the tradeoff is that the key is now
+// visible to anyone who can load this page, matching this project's
+// existing "trusted LAN, no auth" posture rather than the previous
+// on-board-only key handling.
+const kHaikuModel = "gpt-4o-mini";
+const kHaikuPrompt =
+  "この画像に写っている情景にぴったり合う、季語を含む五七五の俳句を1句だけ日本語で作ってください。" +
+  "俳句の3行だけを出力し、説明や前置き、記号（「」など）は付けないでください。";
+
+// Downscaled before export: OpenAI's "low" detail vision mode downscales
+// internally to a small fixed size regardless, so sending the full
+// 384-dot print-resolution image would just cost bandwidth for no benefit.
+function canvasToPngDataUrl(canvas) {
+  const maxW = 512;
+  const scale = Math.min(1, maxW / canvas.width);
+  const w = Math.max(1, Math.round(canvas.width * scale));
+  const h = Math.max(1, Math.round(canvas.height * scale));
+  const small = document.createElement("canvas");
+  small.width = w;
+  small.height = h;
+  small.getContext("2d").drawImage(canvas, 0, 0, w, h);
+  return small.toDataURL("image/png");
+}
+
+async function generateHaikuFromCanvas(canvas) {
+  const settingsResp = await fetch("/api/openai/settings");
+  const settings = await settingsResp.json();
+  if (!settings.configured || !settings.apiKey) {
+    throw new Error("OpenAI APIキーが未設定です（設定タブで登録してください）");
+  }
+
+  const dataUrl = canvasToPngDataUrl(canvas);
+  const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + settings.apiKey },
+    body: JSON.stringify({
+      model: kHaikuModel,
+      max_tokens: 150,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: kHaikuPrompt },
+            { type: "image_url", image_url: { url: dataUrl, detail: "low" } },
+          ],
+        },
+      ],
+    }),
+  });
+  const body = await resp.json();
+  if (!resp.ok) throw new Error((body.error && body.error.message) || "HTTP " + resp.status);
+
+  const content = body.choices && body.choices[0] && body.choices[0].message && body.choices[0].message.content;
+  const haiku = (content || "").trim();
+  if (!haiku) throw new Error("俳句を取得できませんでした");
+  return haiku;
 }
 
 async function requestHaiku(canvas, btn, textEl, printBtn, msgEl) {
@@ -1019,15 +1079,7 @@ async function requestHaiku(canvas, btn, textEl, printBtn, msgEl) {
   printBtn.classList.add("hidden");
   showMsg(msgEl, "俳句を作っています…", "info");
   try {
-    const base64 = canvasToBase64Png(canvas);
-    const r = await fetch("/api/haiku", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "image=" + encodeURIComponent(base64),
-    });
-    const body = await r.text();
-    if (!r.ok) throw new Error(body);
-    const haiku = JSON.parse(body).haiku;
+    const haiku = await generateHaikuFromCanvas(canvas);
     textEl.value = haiku; // editable from here — printHaikuFromText() reads the live value, not this response
     textEl.classList.remove("hidden");
     printBtn.classList.remove("hidden");
@@ -1045,9 +1097,9 @@ async function requestHaiku(canvas, btn, textEl, printBtn, msgEl) {
 // M5StickV frame shows up while that mode is selected. The photo itself is
 // already printed by ATOM Lite the moment it receives the frame (same as
 // 事後閲覧方式) — this only handles the haiku half, which needs the
-// browser (canvas -> PNG -> /api/haiku, see the module doc comment above
-// canvasToBase64Png()). Reuses requestHaiku()/printHaikuFromText() as-is,
-// so it shows the same status messages a manual click would and, via
+// browser (canvas -> generateHaikuFromCanvas() above, which calls OpenAI
+// directly). Reuses requestHaiku()/printHaikuFromText() as-is, so it shows
+// the same status messages a manual click would and, via
 // camHaikuBtn.disabled, can't run concurrently with a manual "俳句を作る"
 // press. Not queued: if a second frame arrives while this is still
 // running (a multi-second OpenAI round-trip), that frame's photo still

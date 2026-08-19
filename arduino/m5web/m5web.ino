@@ -14,6 +14,7 @@
 //      data/ folder to LittleFS — see README.md for the plugin needed.
 
 #include <Arduino.h>
+#include <esp32-hal-bt.h>
 
 #include "camera_link.h"
 #include "gallery.h"
@@ -88,6 +89,15 @@ void printHeartbeat() {
 void setup() {
     Serial.begin(115200);  // USB/UART0 diagnostic log, see `pio device monitor`
     Serial.println("\n=== m5web starting ===");
+    // This project never uses Bluetooth — releases the ~36KB the BT
+    // controller would otherwise reserve back to the heap. The core
+    // usually does this itself (btInUse() defaults to false unless a BT
+    // library is linked in), but calling it explicitly costs nothing and
+    // removes the doubt while chasing a heap-fragmentation-sensitive bug
+    // (see openai.cpp's generateHaiku(), which needs a large *contiguous*
+    // free block for TLS certificate parsing — this is about giving it
+    // more room to find one, not about raising total free bytes).
+    btStop();
     pinMode(kButtonPin, INPUT);
     Printer::begin();
     Led::begin();

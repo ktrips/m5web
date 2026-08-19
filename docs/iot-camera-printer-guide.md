@@ -744,9 +744,8 @@ Web UIが内部で使っているものと同じHTTP APIは、外部プログラ
 | POST | `/api/gallery/delete` | `id`（query）で指定した写真をLittleFSから削除 |
 | GET | `/api/m5paper/settings` | M5Paperのギャラリー更新設定JSON（`autoRefresh`, `pollIntervalMs`） |
 | POST | `/api/m5paper/settings` | `autoRefresh`（`0`/`1`）, `pollIntervalMs`（form）でM5Paperの更新方式を設定 |
-| GET | `/api/openai/settings` | OpenAI APIキーの設定状態JSON（`configured`、キー自体は返さない） |
+| GET | `/api/openai/settings` | OpenAI APIキーの設定状態JSON（`configured`、設定済みなら`apiKey`にキー本体も含む——ブラウザが直接OpenAIへ通信するため） |
 | POST | `/api/openai/settings` | `apiKey`（form）でOpenAI APIキーを設定（空文字で削除） |
-| POST | `/api/haiku` | `image`（form, data URLのprefixを除いたbase64 PNG）から俳句を生成してJSON（`haiku`）で返す |
 
 ### 8.2　curlでの基本操作
 
@@ -809,19 +808,20 @@ requests.post(f"{HOST}/api/print/image",
 
 プリントタブの「M5StickVカメラ」カード・「画像を印刷」カード、どちらにも「俳句を作る」ボタンがあり、表示中の写真から季語入りの五七五俳句をその場で生成できます。裏側ではOpenAIの画像認識（vision）対応モデルを使っています。
 
-**画像処理はすべてブラウザ側で完結します。** どちらの写真も、ブラウザは既にプレビュー用の`<canvas>`に描画済み（M5StickVカメラは1bppビットマップの展開、写真アップロードはディザリング後のプレビュー）なので、「俳句を作る」ボタンを押すとその`canvas.toDataURL("image/png")`をそのままOpenAIへ送る画像として使います。ATOM Lite側で新たに画像を作り直したり、PNGエンコードし直したりする処理は一切ありません——これも、第2章で触れた「重い画像処理はブラウザに任せ、ATOM Liteは軽量なままにする」という設計方針の延長です。
-
-**OpenAIへのリクエストはATOM Liteが中継します**（`POST /api/haiku`）。ブラウザはbase64エンコードされたPNGを送るだけで、実際にOpenAIのAPIキーを使ってHTTPSで通信するのはATOM Lite側（`src/openai.cpp`）です。ブラウザ側のJavaScriptやネットワークタブに、OpenAIのAPIキーが露出することはありません。
+**OpenAIへのリクエストはブラウザから直接送ります。** ATOM Liteは中継しません。どちらの写真も、ブラウザは既にプレビュー用の`<canvas>`に描画済み（M5StickVカメラは1bppビットマップの展開、写真アップロードはディザリング後のプレビュー）なので、「俳句を作る」ボタンを押すとまず`GET /api/openai/settings`でATOM LiteからOpenAI APIキーを取得し、その`<canvas>`を`canvas.toDataURL("image/png")`した画像とともに、ブラウザから直接`https://api.openai.com/v1/chat/completions`へ`fetch()`します（`data/index.html`の`generateHaikuFromCanvas()`）。ATOM Lite側にOpenAIと通信するコードは一切ありません。
 
 ```
-ブラウザ                    ATOM Lite                    OpenAI
-   │  canvas.toDataURL()      │                             │
-   │─────（base64 PNG）──────▶│                             │
-   │      POST /api/haiku     │  Bearer <APIキー> で        │
-   │                          │─────HTTPS POST────────────▶│
-   │                          │◀────俳句（JSON）───────────│
-   │◀────俳句（JSON）─────────│                             │
+ブラウザ                          ATOM Lite              OpenAI
+   │  GET /api/openai/settings      │                        │
+   │────────────────────────────────▶│                        │
+   │◀───{"apiKey":"..."}────────────│                        │
+   │                                                          │
+   │  canvas.toDataURL()                                      │
+   │  Bearer <APIキー> でHTTPS POST（fetch直接）──────────────▶│
+   │◀───俳句（JSON）───────────────────────────────────────────│
 ```
+
+**この設計になった経緯**：当初はATOM Lite側（`src/openai.cpp`）でOpenAIとのHTTPS通信を中継する実装でした。しかしATOM Lite（ESP32 PICO-D4、PSRAM無し）はWebServer・WiFi・M5StickVとのUART通信を同時にこなしながら、TLSハンドシェイクに必要な**連続した空き領域**のヒープを安定して確保できず、画像を小さくしても、接続タイムアウトを伸ばしても、OpenAIへの接続処理をリクエスト処理から`loop()`側へ遅延させても、mbedTLSの失敗箇所（`X509 - Allocation of memory failed`→`PK - Memory allocation failed`→`SSL - Memory allocation failed`と、対策のたびに失敗する場所だけが変わっていく）を解消できませんでした。ブラウザは同じ制約を受けないため、通信そのものをブラウザ側に移すことで解決しています。**トレードオフとして、OpenAI APIキーがブラウザ側（開発者ツールのネットワークタブなど）から見える状態になります**——本プロジェクト全体の「同一LAN内の信頼できる利用者だけを想定し、認証は設けない」というセキュリティ方針の範囲内ではありますが、以前の「キーはATOM Lite側にしか置かない」設計からの変更点として明記しておきます。
 
 利用の前提として、設定タブの「OpenAI設定」カードでAPIキーを登録しておく必要があります（[platform.openai.com](https://platform.openai.com/api-keys)で発行）。未設定のまま「俳句を作る」を押すと、その旨のエラーメッセージが表示されます。
 
@@ -837,9 +837,9 @@ requests.post(f"{HOST}/api/print/image",
 
 書道風の「達筆」なフォントは同梱していません——本書のWeb UIは単一HTMLファイル・外部ライブラリ依存なしという方針（2.2節）を貫いているため、書道フォントのようなサイズの大きいファイルを埋め込むことができないからです。代わりに`data/index.html`の`HAIKU_FONT_STACK`定数に、行書体フォント（Windowsでよく見られる「HGP行書体」など）を優先候補として並べ、無い場合は明朝体にフォールバックするようにしてあります。使っている端末に行書体フォントが入っていれば、より書道らしい見た目になります。
 
-**セキュリティ上の注意**：ATOM LiteからOpenAIへのHTTPS通信は、証明書のピン留め・検証をしていません（`WiFiClientSecure::setInsecure()`）。これは本プロジェクト全体が採用している「同一LAN内の信頼できる利用者だけを想定し、認証は設けない」という簡略化されたセキュリティ方針に合わせたもので、通信自体はTLSで暗号化されますが、サーバー証明書の検証は行いません。また、OpenAI APIの利用には課金が発生する場合があります。
+**セキュリティ上の注意**：前述の通りOpenAI APIキーはブラウザ側から見える状態になります。これは本プロジェクト全体が採用している「同一LAN内の信頼できる利用者だけを想定し、認証は設けない」という簡略化されたセキュリティ方針に合わせたものです。ブラウザとOpenAI間のHTTPS通信自体はブラウザの標準的なTLS実装（証明書検証込み）が行うため、この点はATOM Lite中継版より強化されています。また、OpenAI APIの利用には課金が発生する場合があります。
 
-使用モデルは`src/openai.cpp`の`kModel`定数（本書執筆時点では`gpt-4o-mini`）で指定しています。OpenAI側でモデルが廃止・変更された場合は、ここを書き換えてください。
+使用モデルは`data/index.html`の`kHaikuModel`定数（本書執筆時点では`gpt-4o-mini`）で指定しています。OpenAI側でモデルが廃止・変更された場合は、ここを書き換えてください。
 
 **自動俳句印刷モード**（6.7節）を使うと、ここまで説明した「俳句を作る」「俳句プリント」の2ステップを、M5StickVで撮影するたびに自動で実行できます。仕組みとしては新しいAPIを何も追加しておらず、`data/index.html`の`runAutoHaiku()`が、写真確認の定期ポーリング（`refreshCameraStatus()`、3秒おき）の中で「モードが`autoHaiku`で、かつ新しいフレームが届いた」ことを検知するたびに、これまで説明した`requestHaiku()`→`printHaikuFromText()`の関数を順番に呼び出しているだけです。裏を返せば、**この自動化はブラウザのJavaScriptが担っている**ため、m5webページを開いたタブが無ければ何も起きません（写真自体はATOM Lite単体で自動印刷されるので、そちらは通常どおり動きます）。連写のように短時間で次の写真が届くと、前の俳句生成がまだ実行中の場合はその回の俳句生成をスキップする、という単純な仕組みで多重実行を避けています（凝ったキューは組んでいません）。
 

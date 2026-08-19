@@ -421,19 +421,24 @@ docs.m5stack.com/en/arduino/papercolor/program・.../buttonを根拠に実装）
 [Web上での確認・印刷モード](#web上での確認印刷モード)）。以下は手動・自動どちらの場合にも
 共通の仕組み。
 
-- **画像処理はすべてブラウザ側で完結**: どちらの写真も、ブラウザは既にプレビュー用の
-  `<canvas>`に描画済み（M5StickVカメラは1bppビットマップの展開、写真アップロードは
-  ディザリング後のプレビュー）なので、ボタンを押すとその`canvas.toDataURL("image/png")`を
-  そのままOpenAIへ送る画像として使う。ATOM Lite側で新たに画像を作り直したり、
-  PNGエンコードしたりする処理は一切ない。
-- **OpenAIへのリクエストはATOM Liteが中継する**（`POST /api/haiku`）。ブラウザは
-  base64のPNGを送るだけで、実際にOpenAIのAPIキーを使ってHTTPSでOpenAIと通信するのは
-  ATOM Lite側（`src/openai.cpp`）——ブラウザ側のJavaScriptやネットワークタブに
-  APIキーが露出することはない。証明書のピン留めはしておらず（`WiFiClientSecure::setInsecure()`）、
-  本プロジェクト全体の「同一LAN内の信頼できる利用者だけを想定し、認証は設けない」という
-  既存のセキュリティ方針に合わせた簡略化——通信自体はTLSで暗号化されるが、サーバー証明書の
-  検証はしていない。
-- 使用モデルは`src/openai.cpp`の`kModel`（既定は`gpt-4o-mini`）。OpenAI側でモデルが
+- **OpenAIへのリクエストはブラウザから直接送る**（`fetch("https://api.openai.com/...")`）。
+  ATOM Liteは中継しない——`GET /api/openai/settings`でAPIキーをブラウザに渡し
+  （`{"configured":true,"apiKey":"..."}`）、ブラウザが表示中の`<canvas>`（M5StickVカメラは
+  1bppビットマップの展開、写真アップロードはディザリング後のプレビュー）を
+  `canvas.toDataURL("image/png")`して直接OpenAIへPOSTする（`data/index.html`の
+  `generateHaikuFromCanvas()`）。ATOM Lite側にHTTPSクライアントとしての実装は無い。
+- **この設計になった理由はATOM Lite（ESP32 PICO-D4、PSRAM無し）のメモリ制約**:
+  当初はATOM Lite側でOpenAIとのTLS通信を中継していたが、WebServer/WiFi/カメラリンクを
+  同時に動かした状態では、mbedTLSのハンドシェイクに必要な連続領域のヒープを安定して
+  確保できず（`X509 - Allocation of memory failed`→`PK - Memory allocation failed`→
+  `SSL - Memory allocation failed`と、画像縮小・接続タイムアウト調整・リクエストからの
+  遅延実行などを試すたびに失敗箇所が変わるだけで解決しなかった）、ブラウザ側で完結させる
+  方式に切り替えた。
+- **トレードオフ**: OpenAI APIキーがブラウザ側（ネットワークタブ・JavaScriptから見える形）に
+  渡るようになった。本プロジェクト全体の「同一LAN内の信頼できる利用者だけを想定し、
+  認証は設けない」という既存のセキュリティ方針の範囲内ではあるが、以前の
+  「キーはATOM Lite側にしか置かない」設計からの変更点として明記しておく。
+- 使用モデルは`data/index.html`の`kHaikuModel`（既定は`gpt-4o-mini`）。OpenAI側でモデルが
   廃止された場合はここを書き換える。
 - 生成された俳句は編集可能なテキストエリアに表示される。誤字や言い回しをその場で
   書き換えられる（この編集内容はサーバーには送られず、ブラウザ内だけで完結する）。
@@ -519,9 +524,8 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/gallery/delete` | `id` (query) で指定した写真をLittleFSから削除 |
 | GET | `/api/m5paper/settings` | M5Paperのギャラリー更新設定JSON (`autoRefresh`,`pollIntervalMs`) |
 | POST | `/api/m5paper/settings` | `autoRefresh` (`0`/`1`), `pollIntervalMs` (form) でM5Paperの更新方式を設定（再起動後も保持） |
-| GET | `/api/openai/settings` | OpenAI APIキーの設定状態JSON (`configured`、キー自体は返さない) |
+| GET | `/api/openai/settings` | OpenAI APIキーの設定状態JSON (`configured`、設定済みなら`apiKey`にキー本体も含む——ブラウザが直接OpenAIへ通信するため) |
 | POST | `/api/openai/settings` | `apiKey` (form) でOpenAI APIキーを設定（再起動後も保持、空文字で削除） |
-| POST | `/api/haiku` | `image` (form, data URLのprefixを除いたbase64 PNG) から俳句を生成してJSON (`haiku`) で返す |
 
 ### curl例
 

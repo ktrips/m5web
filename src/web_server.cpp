@@ -44,11 +44,9 @@ void sendPlain(int code, const String &body) {
     server.send(code, "text/plain", body);
 }
 
-// Minimal JSON string escaping for text that ultimately originates off-board
-// (the M5StickV's detection label over UART, an OpenAI-generated haiku) —
-// keeps a stray quote, backslash, or newline from producing invalid JSON on
-// the status/gallery/haiku endpoints. Newlines are escaped rather than
-// dropped since a haiku is naturally multi-line.
+// Minimal JSON string escaping for text that isn't a compile-time literal
+// (the M5StickV's detection label over UART, the saved OpenAI API key) —
+// keeps a stray quote, backslash, or newline from producing invalid JSON.
 String jsonEscape(const char *s) {
     String out;
     for (const char *p = s; *p; p++) {
@@ -415,8 +413,23 @@ void handleM5PaperSettingsSet() {
     sendPlain(200, "OK");
 }
 
+// Unlike the Wi-Fi password (write-only, see WifiManager), this hands the
+// actual key back to the browser — the OpenAI call itself now runs
+// client-side (see data/index.html's generateHaikuFromCanvas()) rather
+// than from this board, since the ATOM Lite (no PSRAM) can't reliably
+// complete a TLS handshake to a CDN-fronted host like api.openai.com
+// while also running as a WebServer/WiFi/camera-link stack — mbedTLS's
+// handshake setup needs a contiguous heap block this board couldn't
+// consistently produce, even after image downscaling, connect-timeout
+// tuning, and deferring the call out of the upload request (see git
+// history for the debugging that led here). The browser has none of
+// those constraints.
 void handleOpenAISettingsGet() {
-    String json = "{\"configured\":" + String(OpenAI::hasKey() ? "true" : "false") + "}";
+    bool configured = OpenAI::hasKey();
+    String json = "{\"configured\":" + String(configured ? "true" : "false") + "}";
+    if (configured) {
+        json = "{\"configured\":true,\"apiKey\":\"" + jsonEscape(OpenAI::getKey().c_str()) + "\"}";
+    }
     server.send(200, "application/json", json);
 }
 
@@ -427,23 +440,6 @@ void handleOpenAISettingsSet() {
     }
     OpenAI::setKey(server.arg("apiKey"));
     sendPlain(200, "OK");
-}
-
-// Body is the raw base64 of a PNG (no "data:image/png;base64," prefix —
-// the browser strips that before sending, see data/index.html), posted as
-// application/x-www-form-urlencoded's `image` field like every other
-// text-bearing POST in this file (e.g. handlePrintText()).
-void handleHaikuGenerate() {
-    if (!server.hasArg("image") || server.arg("image").length() == 0) {
-        sendPlain(400, "image required");
-        return;
-    }
-    String haiku, err;
-    if (!OpenAI::generateHaiku(server.arg("image"), haiku, err)) {
-        sendPlain(400, err);
-        return;
-    }
-    server.send(200, "application/json", "{\"haiku\":\"" + jsonEscape(haiku.c_str()) + "\"}");
 }
 
 }  // namespace
@@ -482,7 +478,6 @@ void begin() {
     server.on("/api/m5paper/settings", HTTP_POST, handleM5PaperSettingsSet);
     server.on("/api/openai/settings", HTTP_GET, handleOpenAISettingsGet);
     server.on("/api/openai/settings", HTTP_POST, handleOpenAISettingsSet);
-    server.on("/api/haiku", HTTP_POST, handleHaikuGenerate);
 
     server.begin();
 }

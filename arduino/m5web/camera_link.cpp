@@ -58,11 +58,6 @@ bool frameReady = false;
 bool pendingPrint = false;
 uint32_t frameSeq = 0;
 
-// Scratch space for rotate(): the transform reads and writes different
-// (x,y) positions, so it can't safely run in place over frameBuffer —
-// build the whole result here first, then copy it over.
-uint8_t rotateScratch[(size_t)Printer::kPrintWidthBytes * kMaxHeightDots];
-
 bool getBit(const uint8_t *buf, uint16_t bytesPerRow, uint16_t x, uint16_t y) {
     uint8_t byte = buf[(size_t)y * bytesPerRow + (x >> 3)];
     return (byte >> (7 - (x & 7))) & 1;
@@ -73,13 +68,21 @@ void setBit(uint8_t *buf, uint16_t bytesPerRow, uint16_t x, uint16_t y, bool bla
     buf[(size_t)y * bytesPerRow + (x >> 3)] |= 0x80 >> (x & 7);
 }
 
-// Rotates frameBuffer 90° clockwise in place (via rotateScratch), rescaled
-// back to kPrintWidthDots wide so the result stays printable — see the
-// rotate() doc comment in camera_link.h for why a plain rotate alone isn't
-// printable. Shared by rotate() (manual, one-shot, bumps frameSeq) and
-// finishIncomingFrame() (applies currentRotationDeg/90 times to every
-// newly-received frame, no frameSeq bump needed since the frame isn't
-// "ready" yet at that point).
+// Rotates frameBuffer 90° clockwise, rescaled back to kPrintWidthDots wide
+// so the result stays printable — see the rotate() doc comment in
+// camera_link.h for why a plain rotate alone isn't printable. Shared by
+// rotate() (manual, one-shot, bumps frameSeq) and finishIncomingFrame()
+// (applies currentRotationDeg/90 times to every newly-received frame, no
+// frameSeq bump needed since the frame isn't "ready" yet at that point).
+//
+// The scratch buffer below is heap-allocated per call (freed before
+// returning), not a static array: the transform reads and writes
+// different (x,y) positions so it can't safely run in place over
+// frameBuffer, but a second permanent kPrintWidthBytes*kMaxHeightDots
+// buffer alongside frameBuffer overflowed the ATOM Lite's DRAM at link
+// time (both are 38400 bytes; rotation is an infrequent, user-triggered
+// action, so paying a malloc/free per call is a fine trade for not
+// reserving that memory all the time).
 void rotateBufferOnce() {
     const uint16_t bytesPerRow = Printer::kPrintWidthBytes;
     const uint16_t w0 = Printer::kPrintWidthDots;  // original width, always 384
@@ -91,22 +94,30 @@ void rotateBufferOnce() {
     uint32_t hf32 = ((uint32_t)w0 * w0) / h0;
     uint16_t hf = (hf32 < 1) ? 1 : (hf32 > kMaxHeightDots ? kMaxHeightDots : (uint16_t)hf32);
 
+    size_t scratchLen = (size_t)bytesPerRow * hf;
+    uint8_t *scratch = (uint8_t *)malloc(scratchLen);
+    if (!scratch) {
+        Serial.println("[camera_link] rotate: out of memory, skipping");
+        return;
+    }
+
     // Nearest-neighbor, inverse-mapped: for each output pixel, find the
     // original pixel it came from, combining the rotate and the rescale
     // into one pass. No source grayscale survives past dithering, so this
     // (same bit-level approach as m5paper.ino's own frame scaling) is the
     // best achievable quality for a repeated rotate.
-    memset(rotateScratch, 0, (size_t)bytesPerRow * hf);
+    memset(scratch, 0, scratchLen);
     for (uint16_t yf = 0; yf < hf; yf++) {
         uint16_t x = (uint16_t)(((uint32_t)yf * w0) / hf);  // 0..w0-1
         for (uint16_t xf = 0; xf < w0; xf++) {
             uint16_t xr = (uint16_t)(((uint32_t)xf * h0) / w0);  // 0..h0-1
             uint16_t y = (h0 - 1) - xr;
-            setBit(rotateScratch, bytesPerRow, xf, yf, getBit(frameBuffer, bytesPerRow, x, y));
+            setBit(scratch, bytesPerRow, xf, yf, getBit(frameBuffer, bytesPerRow, x, y));
         }
     }
 
-    memcpy(frameBuffer, rotateScratch, (size_t)bytesPerRow * hf);
+    memcpy(frameBuffer, scratch, scratchLen);
+    free(scratch);
     frameHeight = hf;
 }
 
