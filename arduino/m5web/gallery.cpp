@@ -212,7 +212,7 @@ bool print(uint16_t id) {
     // /api/gallery/frame) stays untouched, and a caption never covers
     // real photo content.
     String label = prefs.getString(labelKey(id).c_str(), "");
-    String caption = Caption::combine(label.c_str(), Clock::nowHHMM().c_str());
+    String caption = Caption::combine(label.c_str(), Clock::nowDateTime().c_str());
     uint16_t bandHeight = (caption.length() > 0 && height > Caption::kBandHeight) ? Caption::kBandHeight : 0;
 
     Printer::reset();

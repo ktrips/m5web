@@ -16,16 +16,6 @@ void begin() { configTime(kGmtOffsetSec, kDaylightOffsetSec, "ntp.nict.jp", "poo
 
 bool isSynced() { return time(nullptr) >= kPlausibleEpoch; }
 
-String nowHHMM() {
-    if (!isSynced()) return "";
-    time_t now = time(nullptr);
-    struct tm timeinfo;
-    localtime_r(&now, &timeinfo);
-    char buf[6];
-    snprintf(buf, sizeof(buf), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
-    return String(buf);
-}
-
 String nowDateTime() {
     if (!isSynced()) return "";
     time_t now = time(nullptr);

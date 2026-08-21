@@ -2,8 +2,9 @@
 
 #include <Arduino.h>
 
-// Minimal 5x7 dot-matrix font (space, 0-9, A-Z only — lowercase is folded
-// to uppercase, anything else renders blank) for stamping short captions
+// Minimal 5x7 dot-matrix font (space, 0-9, A-Z, "/" and ":" only —
+// lowercase is folded to uppercase, anything else renders blank) for
+// stamping short captions
 // directly onto a printed 1bpp raster image (e.g. a face-detection label
 // from CameraLink/Gallery) — as opposed to Printer::printText()'s separate
 // ESC/POS text line, this draws into the image itself.

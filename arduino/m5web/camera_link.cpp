@@ -160,7 +160,7 @@ void printStoredFrame() {
     // last rows — frameBuffer (also served to the web UI via
     // /api/camera/frame) stays untouched, and a caption never covers real
     // photo content even if e.g. a detected face sits near the bottom.
-    String caption = Caption::combine(frameLabel, Clock::nowHHMM().c_str());
+    String caption = Caption::combine(frameLabel, Clock::nowDateTime().c_str());
     uint16_t bandHeight = (caption.length() > 0 && frameHeight > Caption::kBandHeight) ? Caption::kBandHeight : 0;
 
     Printer::reset();

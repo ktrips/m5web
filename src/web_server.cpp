@@ -201,7 +201,7 @@ void handleImageUploadChunk() {
         if (imageInProgress) {
             if (uploadBandHeight > 0) {
                 uint8_t band[Printer::kPrintWidthBytes * Caption::kBandHeight];
-                Caption::stamp(band, Printer::kPrintWidthBytes, Clock::nowHHMM().c_str());
+                Caption::stamp(band, Printer::kPrintWidthBytes, Clock::nowDateTime().c_str());
                 Printer::feedRasterChunk(band, (size_t)Printer::kPrintWidthBytes * uploadBandHeight);
             }
             Printer::endRaster();

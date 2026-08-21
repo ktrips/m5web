@@ -1127,43 +1127,54 @@ $("uploadHaikuBtn").addEventListener("click", () => {
 // genuine running-script fonts where the OS happens to have one (mostly
 // Windows), falling back to an elegant mincho serif everywhere else. Either
 // way it prints through the same threshold-dither path as a photo, so the
-// exact typeface matters less than the vertical 2-column layout itself.
+// exact typeface matters less than the vertical 3-column layout itself.
 const HAIKU_FONT_STACK =
   '"HGP行書体", "HG行書体", "HGS行書体", "Klee", "Yuppy TC", "Hiragino Mincho ProN", "Yu Mincho", serif';
 
-// Splits haiku text into two columns for 縦書き (top-to-bottom, right-to-
-// left) printing: the textarea's own line breaks (typically the 5/7/5
-// phrases) decide the split when there are 2+ lines — the first half of the
-// lines becomes the right-hand column (read first), the rest the left-hand
-// column — so a 3-line haiku naturally becomes "line1+line2" / "line3".
-// Falls back to splitting a single line in half by character count if the
-// user removed all line breaks while editing.
+// Splits haiku text into three columns for 縦書き (top-to-bottom, right-to-
+// left) printing, one column per 5/7/5 phrase: kHaikuPrompt asks the model
+// for exactly 3 lines, so the textarea's own line breaks decide the split
+// when there are 3+ lines — line 1 becomes the rightmost column (read
+// first), line 2 the middle column, line 3 the leftmost column. With more
+// than 3 lines, the extra ones are folded into the middle column. Falls
+// back to splitting the whole text into three roughly equal chunks by
+// character count if the user removed line breaks while editing.
 function splitHaikuForVertical(text) {
   const lines = text.split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
-  if (lines.length >= 2) {
-    const cut = Math.ceil(lines.length / 2);
-    return [lines.slice(0, cut).join(""), lines.slice(cut).join("")];
+  if (lines.length >= 3) {
+    const cut1 = Math.ceil(lines.length / 3);
+    const cut2 = Math.ceil((2 * lines.length) / 3);
+    return [lines.slice(0, cut1).join(""), lines.slice(cut1, cut2).join(""), lines.slice(cut2).join("")];
   }
-  const whole = lines[0] || text.trim();
-  const mid = Math.ceil(whole.length / 2);
-  return [whole.slice(0, mid), whole.slice(mid)];
+  const whole = lines.join("") || text.trim();
+  const third = Math.ceil(whole.length / 3);
+  return [whole.slice(0, third), whole.slice(third, third * 2), whole.slice(third * 2)];
 }
 
-// Renders `text` as a two-column vertical composition sized to the
-// printer's fixed 384-dot width, with a plain double-line frame for a bit
-// of tanzaku-strip flavor. Long vowel marks ("ー") are rotated 90° since a
-// horizontal one reads as an obvious mistake in vertical text; small-kana
-// shifting and vertical punctuation forms are not attempted (a real
-// typesetting pass is out of scope here — see HAIKU_FONT_STACK's comment).
+// Renders `text` as a three-column vertical composition (one column per
+// 5/7/5 phrase, see splitHaikuForVertical) sized to the printer's fixed
+// 384-dot width, with a plain double-line frame for a bit of tanzaku-strip
+// flavor. Each column starts progressively lower than the one to its
+// right — column 1 (rightmost, read first) sits highest and column 3
+// (leftmost, read last) sits lowest — for the staggered "cascading" look
+// traditionally used when writing out a haiku/tanka by hand. Long vowel
+// marks ("ー") are rotated 90° since a horizontal one reads as an obvious
+// mistake in vertical text; small-kana shifting and vertical punctuation
+// forms are not attempted (a real typesetting pass is out of scope here —
+// see HAIKU_FONT_STACK's comment).
 function renderVerticalHaikuCanvas(text) {
-  const [rightCol, leftCol] = splitHaikuForVertical(text);
-  const cell = 108; // dot size of each (roughly square) character cell
-  const margin = 28;
-  const gap = 24;
-  const rows = Math.max(rightCol.length, leftCol.length, 1);
+  const cols = splitHaikuForVertical(text);
+  const cell = 90; // dot size of each (roughly square) character cell
+  const margin = 24;
+  const gap = 16;
+  const stagger = Math.round(cell * 0.7); // vertical drop per column, right to left
 
   const w = PRINT_WIDTH;
-  const h = margin * 2 + rows * cell;
+  const colWidth = (w - margin * 2 - gap * 2) / 3;
+  const offsets = [0, stagger, stagger * 2];
+  const contentBottom = Math.max(...cols.map((c, i) => offsets[i] + Math.max(c.length, 1) * cell));
+  const h = margin * 2 + contentBottom;
+
   const canvas = document.createElement("canvas");
   canvas.width = w;
   canvas.height = h;
@@ -1182,12 +1193,8 @@ function renderVerticalHaikuCanvas(text) {
   ctx.textBaseline = "middle";
   ctx.font = Math.floor(cell * 0.8) + 'px ' + HAIKU_FONT_STACK;
 
-  const colWidth = (w - margin * 2 - gap) / 2;
-  const rightX = w - margin - colWidth / 2; // read first (right, per 縦書き order)
-  const leftX = margin + colWidth / 2; // read second
-  const startY = margin + cell / 2;
-
-  function drawColumn(chars, x) {
+  function drawColumn(chars, x, yOffset) {
+    const startY = margin + yOffset + cell / 2;
     for (let i = 0; i < chars.length; i++) {
       const ch = chars[i];
       const y = startY + i * cell;
@@ -1203,8 +1210,13 @@ function renderVerticalHaikuCanvas(text) {
     }
   }
 
-  drawColumn(rightCol, rightX);
-  drawColumn(leftCol, leftX);
+  // Right to left, per 縦書き reading order: column 1 (first phrase) is
+  // rightmost and highest; each subsequent column sits one `stagger` lower.
+  for (let i = 0; i < cols.length; i++) {
+    const x = w - margin - colWidth / 2 - i * (colWidth + gap);
+    drawColumn(cols[i], x, offsets[i]);
+  }
+
   return canvas;
 }
 
