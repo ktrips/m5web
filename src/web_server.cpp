@@ -8,6 +8,7 @@
 #include "caption.h"
 #include "clock.h"
 #include "gallery.h"
+#include "haiku.h"
 #include "led.h"
 #include "openai.h"
 #include "printer.h"
@@ -442,6 +443,22 @@ void handleOpenAISettingsSet() {
     sendPlain(200, "OK");
 }
 
+// Both fields are pure browser-side concerns (poem form and print-time
+// author credit, see data/index.html) — this board just persists them so
+// every device viewing this page's Web UI agrees, same as every other
+// setting card.
+void handleHaikuSettingsGet() {
+    String json = "{\"poemType\":\"" + jsonEscape(Haiku::poemType().c_str()) + "\"" +
+                  ",\"author\":\"" + jsonEscape(Haiku::author().c_str()) + "\"}";
+    server.send(200, "application/json", json);
+}
+
+void handleHaikuSettingsSet() {
+    if (server.hasArg("poemType")) Haiku::setPoemType(server.arg("poemType"));
+    if (server.hasArg("author")) Haiku::setAuthor(server.arg("author"));
+    sendPlain(200, "OK");
+}
+
 }  // namespace
 
 void begin() {
@@ -478,6 +495,8 @@ void begin() {
     server.on("/api/m5paper/settings", HTTP_POST, handleM5PaperSettingsSet);
     server.on("/api/openai/settings", HTTP_GET, handleOpenAISettingsGet);
     server.on("/api/openai/settings", HTTP_POST, handleOpenAISettingsSet);
+    server.on("/api/haiku/settings", HTTP_GET, handleHaikuSettingsGet);
+    server.on("/api/haiku/settings", HTTP_POST, handleHaikuSettingsSet);
 
     server.begin();
 }

@@ -160,7 +160,7 @@
       </div>
       <div class="msg" id="camMsg"></div>
       <button class="secondary full hidden" id="camHaikuBtn" style="margin-top:8px">俳句を作る</button>
-      <textarea class="haiku-box hidden" id="camHaikuText" rows="3" placeholder="生成された俳句がここに表示されます（編集可）"></textarea>
+      <textarea class="haiku-box hidden" id="camHaikuText" rows="5" placeholder="生成された俳句がここに表示されます（編集可）"></textarea>
       <button class="primary full hidden" id="camHaikuPrintBtn" style="margin-top:8px">俳句プリント</button>
       <div class="msg" id="camHaikuMsg"></div>
     </div>
@@ -202,7 +202,7 @@
         <progress id="imageProgress" max="100" value="0"></progress>
         <div class="msg" id="imageMsg"></div>
         <button class="secondary full" id="uploadHaikuBtn" style="margin-top:8px">俳句を作る</button>
-        <textarea class="haiku-box hidden" id="uploadHaikuText" rows="3" placeholder="生成された俳句がここに表示されます（編集可）"></textarea>
+        <textarea class="haiku-box hidden" id="uploadHaikuText" rows="5" placeholder="生成された俳句がここに表示されます（編集可）"></textarea>
         <button class="primary full hidden" id="uploadHaikuPrintBtn" style="margin-top:8px">俳句プリント</button>
         <div class="msg" id="uploadHaikuMsg"></div>
       </div>
@@ -253,17 +253,41 @@
         <input type="radio" name="camMode" id="camModePreview" value="preview">
         <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷）</label>
       </div>
-      <div class="radio-line">
-        <input type="radio" name="camMode" id="camModeAutoHaiku" value="autoHaiku">
-        <label for="camModeAutoHaiku" style="margin:0;color:var(--text)">自動俳句印刷モード（撮影→俳句生成→両方印刷）</label>
-      </div>
       <p class="meta">ウェブ上に表示された後に印刷ボタンを押すか、ATOMのボタンを押して印刷。
-      自動俳句印刷モードでは、写真の印刷はATOM Lite側で自動的に行われますが、俳句の生成・印刷は
-      このページを開いているブラウザが行うため、<b>m5webページを開いたままにしておく必要が
-      あります</b>（OpenAI APIキーも設定タブで登録しておいてください）。</p>
+      自動俳句印刷モードは「俳句設定」カードに移動しました。</p>
       <label>写真の回転（次に受信するフレームから適用）</label>
       <button type="button" class="secondary full" id="camDefaultRotateBtn">回転（現在: <span id="camDefaultRotateVal">0</span>°）</button>
       <p class="meta">押すたびに時計回りに90°ずつ回転します。すでに受信・表示中の1枚には遡って反映されません。</p>
+    </div>
+
+    <div class="card">
+      <h2>俳句設定</h2>
+      <div class="radio-line">
+        <input type="radio" name="poemType" id="poemTypeHaiku" value="haiku" checked>
+        <label for="poemTypeHaiku" style="margin:0;color:var(--text)">俳句（五七五・3行）</label>
+      </div>
+      <div class="radio-line">
+        <input type="radio" name="poemType" id="poemTypePoem" value="poem">
+        <label for="poemTypePoem" style="margin:0;color:var(--text)">ポエム（30文字程度の自由詩）</label>
+      </div>
+      <p class="meta">「俳句を作る」ボタンで生成する詩の形式を選びます。縦書き印刷の列数もこれに合わせて変わります。
+      ATOM Lite本体のボタンを<b>ダブルクリック</b>しても切り替えられます——本体LEDが
+      <b>緑色なら俳句モード、青色ならポエムモード</b>です（今どちらのモードかは、この設定を
+      切り替えた直後や、印刷可能な写真がある間、常にLEDの色でわかります）。</p>
+
+      <label style="margin-top:12px">著者名（任意）</label>
+      <input type="text" id="haikuAuthor" placeholder="例: 芭蕉">
+      <p class="meta">入力すると、印刷時に左端下へ縦書きで小さく添えられます。空欄なら何も印刷されません。</p>
+      <div class="msg" id="haikuMsg"></div>
+
+      <div class="radio-line" style="margin-top:16px">
+        <input type="radio" name="camMode" id="camModeAutoHaiku" value="autoHaiku">
+        <label for="camModeAutoHaiku" style="margin:0;color:var(--text)">自動俳句印刷モード（M5StickV撮影→自動生成→両方印刷）</label>
+      </div>
+      <p class="meta">M5StickVカメラの扱いをこのモードにすると、撮影のたびに上で選んだ形式で自動生成・印刷します。
+      写真の印刷はATOM Lite側で自動的に行われますが、俳句・ポエムの生成と印刷はこのページを開いている
+      ブラウザが行うため、<b>m5webページを開いたままにしておく必要があります</b>
+      （OpenAI設定でAPIキーも登録しておいてください）。</p>
     </div>
 
     <div class="card">
@@ -1002,6 +1026,78 @@ $("openaiSaveBtn").addEventListener("click", async () => {
 refreshOpenAIStatus();
 setInterval(refreshOpenAIStatus, 5000);
 
+// ---------- haiku settings (poem type, author) ----------
+
+// Number of 縦書き columns each form prints as: 俳句 is always 5/7/5 (a
+// fixed 3 lines). ポエム has no fixed structure (just a ~30-character free
+// verse), so its column count instead follows however many lines the
+// generated/edited text actually has (clamped to a readable 2-4 range) —
+// see splitHaikuForVertical().
+function poemTypeColumns(poemType, text) {
+  if (poemType !== "poem") return 3;
+  const lines = (text || "").split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
+  return Math.min(4, Math.max(2, lines.length || 2));
+}
+
+function currentPoemType() {
+  const el = document.querySelector('input[name="poemType"]:checked');
+  return el ? el.value : "haiku";
+}
+
+function updateHaikuLabels(poemType) {
+  const noun = poemType === "poem" ? "ポエム" : "俳句";
+  $("camHaikuBtn").textContent = noun + "を作る";
+  $("uploadHaikuBtn").textContent = noun + "を作る";
+  $("camHaikuPrintBtn").textContent = noun + "プリント";
+  $("uploadHaikuPrintBtn").textContent = noun + "プリント";
+  const placeholder = "生成された" + noun + "がここに表示されます（編集可）";
+  $("camHaikuText").placeholder = placeholder;
+  $("uploadHaikuText").placeholder = placeholder;
+}
+
+let haikuSettingsLoaded = false;
+
+async function refreshHaikuSettings() {
+  if (haikuSettingsLoaded) return; // only prefill once; don't clobber in-progress edits
+  try {
+    const r = await fetch("/api/haiku/settings");
+    const s = await r.json();
+    haikuSettingsLoaded = true;
+    const poemType = s.poemType === "poem" ? "poem" : "haiku";
+    $(poemType === "poem" ? "poemTypePoem" : "poemTypeHaiku").checked = true;
+    $("haikuAuthor").value = s.author || "";
+    updateHaikuLabels(poemType);
+  } catch (e) {
+    // transient network error; leave the fields as-is and try again next poll
+  }
+}
+
+async function saveHaikuSettings() {
+  const msg = $("haikuMsg");
+  const poemType = currentPoemType();
+  const author = $("haikuAuthor").value.trim();
+  updateHaikuLabels(poemType);
+  try {
+    const r = await fetch("/api/haiku/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "poemType=" + poemType + "&author=" + encodeURIComponent(author),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    showMsg(msg, "保存しました", "ok");
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  }
+}
+
+document.querySelectorAll('input[name="poemType"]').forEach((el) => {
+  el.addEventListener("change", saveHaikuSettings);
+});
+$("haikuAuthor").addEventListener("change", saveHaikuSettings);
+
+refreshHaikuSettings();
+setInterval(refreshHaikuSettings, 4000);
+
 // ---------- haiku generation ----------
 
 // The OpenAI call runs entirely in the browser rather than on the ATOM
@@ -1020,9 +1116,19 @@ setInterval(refreshOpenAIStatus, 5000);
 // existing "trusted LAN, no auth" posture rather than the previous
 // on-board-only key handling.
 const kHaikuModel = "gpt-4o-mini";
-const kHaikuPrompt =
-  "この画像に写っている情景にぴったり合う、季語を含む五七五の俳句を1句だけ日本語で作ってください。" +
-  "俳句の3行だけを出力し、説明や前置き、記号（「」など）は付けないでください。";
+
+// 俳句設定カードで選んだ形式に応じて、OpenAIへのプロンプトを切り替える。
+// 俳句は行数（3行）が固定なのに対し、ポエムは行数を指定せず長さの目安
+// （30文字程度）だけを伝える——印刷時の列数（poemTypeColumns()）も、
+// ポエムでは返ってきた行数にそのまま追従する。
+function haikuPromptFor(poemType) {
+  if (poemType === "poem") {
+    return "この画像に写っている情景からインスピレーションを得た、30文字程度の短い詩を日本語で作ってください。" +
+      "行の分け方は自由です（2〜4行程度）。詩の本文だけを出力し、説明や前置き、記号（「」など）は付けないでください。";
+  }
+  return "この画像に写っている情景にぴったり合う、季語を含む五七五の俳句を1句だけ日本語で作ってください。" +
+    "俳句の3行だけを出力し、説明や前置き、記号（「」など）は付けないでください。";
+}
 
 // Downscaled before export: OpenAI's "low" detail vision mode downscales
 // internally to a small fixed size regardless, so sending the full
@@ -1057,7 +1163,7 @@ async function generateHaikuFromCanvas(canvas) {
         {
           role: "user",
           content: [
-            { type: "text", text: kHaikuPrompt },
+            { type: "text", text: haikuPromptFor(currentPoemType()) },
             { type: "image_url", image_url: { url: dataUrl, detail: "low" } },
           ],
         },
@@ -1127,51 +1233,72 @@ $("uploadHaikuBtn").addEventListener("click", () => {
 // genuine running-script fonts where the OS happens to have one (mostly
 // Windows), falling back to an elegant mincho serif everywhere else. Either
 // way it prints through the same threshold-dither path as a photo, so the
-// exact typeface matters less than the vertical 3-column layout itself.
+// exact typeface matters less than the vertical multi-column layout itself.
 const HAIKU_FONT_STACK =
   '"HGP行書体", "HG行書体", "HGS行書体", "Klee", "Yuppy TC", "Hiragino Mincho ProN", "Yu Mincho", serif';
 
-// Splits haiku text into three columns for 縦書き (top-to-bottom, right-to-
-// left) printing, one column per 5/7/5 phrase: kHaikuPrompt asks the model
-// for exactly 3 lines, so the textarea's own line breaks decide the split
-// when there are 3+ lines — line 1 becomes the rightmost column (read
-// first), line 2 the middle column, line 3 the leftmost column. With more
-// than 3 lines, the extra ones are folded into the middle column. Falls
-// back to splitting the whole text into three roughly equal chunks by
+// Splits text into `numCols` columns for 縦書き (top-to-bottom, right-to-
+// left) printing, one column per phrase: 俳句 always asks the model for
+// exactly 3 lines (poemTypeColumns() returns 3 to match), while ポエム has
+// no fixed line count — poemTypeColumns() there just counts whatever lines
+// the generated/edited text actually has, so the two stay in sync. The
+// textarea's own line breaks decide the split when there are enough lines
+// — line 1 becomes the rightmost column (read first), the last line the
+// leftmost column (read last). With more lines than columns, the extras
+// are distributed evenly rather than dropped. Falls back to
+// splitting the whole text into `numCols` roughly equal chunks by
 // character count if the user removed line breaks while editing.
-function splitHaikuForVertical(text) {
+function splitHaikuForVertical(text, numCols) {
   const lines = text.split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
-  if (lines.length >= 3) {
-    const cut1 = Math.ceil(lines.length / 3);
-    const cut2 = Math.ceil((2 * lines.length) / 3);
-    return [lines.slice(0, cut1).join(""), lines.slice(cut1, cut2).join(""), lines.slice(cut2).join("")];
+  const source = lines.length >= numCols ? lines : null;
+  const whole = source ? null : lines.join("") || text.trim();
+  const cols = [];
+  for (let i = 0; i < numCols; i++) {
+    if (source) {
+      const cut1 = i === 0 ? 0 : Math.ceil((i * source.length) / numCols);
+      const cut2 = i === numCols - 1 ? source.length : Math.ceil(((i + 1) * source.length) / numCols);
+      cols.push(source.slice(cut1, cut2).join(""));
+    } else {
+      const cut1 = Math.floor((i * whole.length) / numCols);
+      const cut2 = Math.floor(((i + 1) * whole.length) / numCols);
+      cols.push(whole.slice(cut1, cut2));
+    }
   }
-  const whole = lines.join("") || text.trim();
-  const third = Math.ceil(whole.length / 3);
-  return [whole.slice(0, third), whole.slice(third, third * 2), whole.slice(third * 2)];
+  return cols;
 }
 
-// Renders `text` as a three-column vertical composition (one column per
-// 5/7/5 phrase, see splitHaikuForVertical) sized to the printer's fixed
-// 384-dot width, with a plain double-line frame for a bit of tanzaku-strip
-// flavor. Each column starts progressively lower than the one to its
-// right — column 1 (rightmost, read first) sits highest and column 3
+// Renders `text` as an N-column vertical composition (one column per
+// phrase, see splitHaikuForVertical) sized to the printer's fixed 384-dot
+// width, with a plain double-line frame for a bit of tanzaku-strip flavor.
+// Each column starts progressively lower than the one to its right —
+// column 1 (rightmost, read first) sits highest and the last column
 // (leftmost, read last) sits lowest — for the staggered "cascading" look
-// traditionally used when writing out a haiku/tanka by hand. Long vowel
-// marks ("ー") are rotated 90° since a horizontal one reads as an obvious
-// mistake in vertical text; small-kana shifting and vertical punctuation
-// forms are not attempted (a real typesetting pass is out of scope here —
-// see HAIKU_FONT_STACK's comment).
-function renderVerticalHaikuCanvas(text) {
-  const cols = splitHaikuForVertical(text);
-  const cell = 90; // dot size of each (roughly square) character cell
-  const margin = 24;
-  const gap = 16;
-  const stagger = Math.round(cell * 0.7); // vertical drop per column, right to left
+// traditionally used when writing out a haiku/tanka by hand. If `author`
+// is non-empty, it's added as its own narrow, smaller-scale column at the
+// far left, bottom-aligned within the same height as the poem so it reads
+// as a small signature tucked in the bottom-left corner — the traditional
+// spot for a haiku/tanka's author credit. Long vowel marks ("ー") are
+// rotated 90° since a horizontal one reads as an obvious mistake in
+// vertical text; small-kana shifting and vertical punctuation forms are
+// not attempted (a real typesetting pass is out of scope here — see
+// HAIKU_FONT_STACK's comment).
+function renderVerticalHaikuCanvas(text, numCols, author) {
+  const cols = splitHaikuForVertical(text, numCols);
+  const margin = 20;
+  const gap = 10;
+  const authorColWidth = author ? 40 : 0;
+  const gapCount = numCols - 1 + (author ? 1 : 0);
 
   const w = PRINT_WIDTH;
-  const colWidth = (w - margin * 2 - gap * 2) / 3;
-  const offsets = [0, stagger, stagger * 2];
+  // Solved so colWidth ends up ~1.1x the character cell (a ratio that reads
+  // comfortably at any column count) regardless of how many columns — and
+  // therefore of font size — this print needs.
+  const cell = (w - margin * 2 - gap * gapCount - authorColWidth) / (numCols * 1.1);
+  const colWidth = cell * 1.1;
+  const authorCell = cell * 0.55; // noticeably smaller — a signature, not a fourth phrase
+
+  const stagger = Math.round(cell * 0.7); // vertical drop per column, right to left
+  const offsets = cols.map((_, i) => stagger * i);
   const contentBottom = Math.max(...cols.map((c, i) => offsets[i] + Math.max(c.length, 1) * cell));
   const h = margin * 2 + contentBottom;
 
@@ -1191,13 +1318,13 @@ function renderVerticalHaikuCanvas(text) {
   ctx.fillStyle = "#000";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = Math.floor(cell * 0.8) + 'px ' + HAIKU_FONT_STACK;
 
-  function drawColumn(chars, x, yOffset) {
-    const startY = margin + yOffset + cell / 2;
+  function drawColumn(chars, x, yOffset, charCell) {
+    ctx.font = Math.floor(charCell * 0.8) + 'px ' + HAIKU_FONT_STACK;
+    const startY = margin + yOffset + charCell / 2;
     for (let i = 0; i < chars.length; i++) {
       const ch = chars[i];
-      const y = startY + i * cell;
+      const y = startY + i * charCell;
       if (ch === "ー" || ch === "―" || ch === "-") {
         ctx.save();
         ctx.translate(x, y);
@@ -1214,7 +1341,14 @@ function renderVerticalHaikuCanvas(text) {
   // rightmost and highest; each subsequent column sits one `stagger` lower.
   for (let i = 0; i < cols.length; i++) {
     const x = w - margin - colWidth / 2 - i * (colWidth + gap);
-    drawColumn(cols[i], x, offsets[i]);
+    drawColumn(cols[i], x, offsets[i], cell);
+  }
+
+  if (author) {
+    const authorX = margin + authorColWidth / 2;
+    const authorHeight = author.length * authorCell;
+    const authorYOffset = Math.max(0, contentBottom - authorHeight);
+    drawColumn(author, authorX, authorYOffset, authorCell);
   }
 
   return canvas;
@@ -1229,7 +1363,9 @@ async function printHaikuFromText(textEl, btn, msgEl) {
   btn.disabled = true;
   showMsg(msgEl, "印刷用の画像を作っています…", "info");
   try {
-    const canvas = renderVerticalHaikuCanvas(text);
+    const poemType = currentPoemType();
+    const author = $("haikuAuthor").value.trim();
+    const canvas = renderVerticalHaikuCanvas(text, poemTypeColumns(poemType, text), author);
     const w = canvas.width;
     let h = canvas.height;
     if (h > maxHeightDots) h = maxHeightDots; // safety clamp; a real haiku never gets close to this

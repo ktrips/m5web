@@ -3,6 +3,7 @@
 
 #include "camera_link.h"
 #include "gallery.h"
+#include "haiku.h"
 #include "led.h"
 #include "openai.h"
 #include "printer.h"
@@ -10,14 +11,32 @@
 #include "wifi_manager.h"
 
 // ATOM Lite's builtin button (G39, active LOW).
-//   short press (released before kResetHoldMs) -> reprint the last M5StickV
-//     camera frame, if any
-//   held past kResetHoldMs                     -> forget saved WiFi
+//   single short press (released before kResetHoldMs, with no second short
+//     press following within kDoubleTapWindowMs) -> reprint the last
+//     M5StickV camera frame, if any
+//   double-click (two short-press releases within kDoubleTapWindowMs of
+//     each other)                                -> toggle 俳句/ポエム
+//     generation mode (Haiku::poemType()), reflected by the LED color
+//     (green=俳句, blue=ポエム; see led.h)
+//   held past kResetHoldMs                        -> forget saved WiFi
 //     credentials and drop back into AP setup mode
 constexpr uint8_t kButtonPin = 39;
 constexpr unsigned long kResetHoldMs = 5000;
 constexpr unsigned long kMinPressMs = 50;  // debounce floor for a "real" short press
+constexpr unsigned long kDoubleTapWindowMs = 400;
 unsigned long buttonDownSinceMs = 0;
+// 0 = no single-click awaiting confirmation; otherwise the millis() of a
+// short-press release still waiting to see whether a second one follows
+// within kDoubleTapWindowMs (in which case it becomes a double-click
+// instead, and the pending reprint never fires).
+unsigned long pendingSingleClickMs = 0;
+
+void togglePoemMode() {
+    bool nowHaiku = Haiku::poemType() != "haiku";  // i.e. was "poem" (or unset) -> becomes "haiku"
+    Haiku::setPoemType(nowHaiku ? "haiku" : "poem");
+    Led::setModeColor(nowHaiku);
+    Serial.printf("[button] double-click: poem mode -> %s\n", Haiku::poemType().c_str());
+}
 
 void checkButton() {
     bool pressed = digitalRead(kButtonPin) == LOW;
@@ -30,10 +49,23 @@ void checkButton() {
         unsigned long heldMs = millis() - buttonDownSinceMs;
         buttonDownSinceMs = 0;
         if (heldMs >= kMinPressMs && heldMs < kResetHoldMs) {
-            Serial.println("[button] short press: reprinting last camera frame");
-            if (!CameraLink::printLastFrame()) {
-                Serial.println("[button] no camera frame to print yet");
+            unsigned long now = millis();
+            if (pendingSingleClickMs != 0 && (now - pendingSingleClickMs) <= kDoubleTapWindowMs) {
+                pendingSingleClickMs = 0;
+                togglePoemMode();
+            } else {
+                pendingSingleClickMs = now;
             }
+        }
+    }
+
+    // A single short press only becomes a reprint once the double-tap
+    // window has passed without a second press — see kDoubleTapWindowMs.
+    if (pendingSingleClickMs != 0 && millis() - pendingSingleClickMs > kDoubleTapWindowMs) {
+        pendingSingleClickMs = 0;
+        Serial.println("[button] short press: reprinting last camera frame");
+        if (!CameraLink::printLastFrame()) {
+            Serial.println("[button] no camera frame to print yet");
         }
     }
 }
@@ -68,6 +100,7 @@ void printHeartbeat() {
                                                                      : "auto";
     Serial.printf("camera: mode=%s frameReady=%d pendingPrint=%d last=%ux%u brightness=%d contrast=%d\n", modeStr,
                   cs.frameReady, cs.pendingPrint, cs.width, cs.height, cs.brightness, cs.contrast);
+    Serial.printf("poem: type=%s\n", Haiku::poemType().c_str());
     Serial.println("-----------------------");
 }
 
@@ -86,6 +119,8 @@ void setup() {
     pinMode(kButtonPin, INPUT);
     Printer::begin();
     Led::begin();
+    Haiku::begin();
+    Led::setModeColor(Haiku::poemType() == "haiku");  // reflect the persisted mode before anything can light the LED
     Gallery::begin();  // reports pre-existing saved photos to Led on begin()
     CameraLink::begin();
     OpenAI::begin();
