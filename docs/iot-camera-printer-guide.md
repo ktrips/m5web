@@ -998,7 +998,7 @@ src/
   font.*                  5x7ドットマトリクスフォント（半角英数字のみ）の描画
   caption.*               印刷時刻・検出ラベルを印刷画像に追加する（白帯+黒文字）
   clock.*                 NTPによる時刻同期（JST固定）
-  openai.*                 OpenAI Chat Completions APIへのHTTPSクライアント（俳句生成、8.4節）
+  openai.*                 OpenAI APIキーの保存・受け渡しのみ（HTTPS通信自体はブラウザ側、8.4節）
 data/
   index.html              m5web本体（UI＋Canvas画像変換、外部CDN依存なし・単一ファイル）
 arduino/m5web/
