@@ -12,9 +12,13 @@
 //
 // BtnA/BtnB step through the gallery (newest-first, same order as the web
 // UI), BtnC prints whichever entry is currently shown. Double-tapping the
-// top power button (M5.BtnPWR) switches to a read-only view of the
-// m5webページ's 「俳句設定」card (poemType/author/autoMode) and back — see
-// handlePowerButton()/renderHaikuSettings().
+// top power button (M5.BtnPWR) switches to a view of the m5webページ's
+// 「俳句設定」card (poemType/author/autoMode) and back — see
+// handlePowerButton()/renderHaikuSettings(). On that screen, a single
+// (non-double-tap) press of the same power button toggles poemType
+// (俳句⇄ポエム), and BtnA/BtnB step autoMode backward/forward through
+// none -> generate -> print (see cycleHaikuAutoMode()) — both write
+// straight back to /api/haiku/settings, so this is no longer read-only.
 //
 // Target hardware: M5PaperColor (ESP32-S3, ~4" E Ink Spectra 6 color
 // panel, 3 physical buttons — BtnA/BtnB/BtnC). This is a DIFFERENT board
@@ -158,23 +162,36 @@ uint8_t *frameBuf = nullptr;
 String statusMsg;
 
 // ---- app state: screen switching ----
-// Only two screens exist: the gallery (default) and a read-only view of
-// the m5webページ's 「俳句設定」card (poemType/author/autoMode — see
+// Only two screens exist: the gallery (default) and a view of the
+// m5webページ's 「俳句設定」card (poemType/author/autoMode — see
 // src/haiku.h), reached by double-tapping the top power button
 // (M5.BtnPWR) from either screen — see handlePowerButton(). BtnA/BtnB/BtnC
-// only do anything while Screen::kGallery is active (see handleButtons()).
+// only navigate the gallery while Screen::kGallery is active; on
+// Screen::kHaikuSettings they instead step autoMode (see handleButtons()).
 enum class Screen { kGallery, kHaikuSettings };
 Screen currentScreen = Screen::kGallery;
 
-// Double-tap tracking for the top power button, same shape as
-// lastNavButton/lastNavPressMs above but for a single button so it only
-// needs a timestamp (no "which button" to remember).
-unsigned long lastPwrPressMs = 0;
+// Deferred single-vs-double-tap resolution for the top power button —
+// same idea as ATOM Lite's checkButton()/pendingSingleClickMs
+// (src/main.cpp), adapted to M5Unified's per-loop wasPressed() edges
+// instead of a raw digitalRead(): a press is only acted on once
+// kDoubleTapWindowMs has passed with no second press (making it a lone
+// single press — see handlePowerButton()'s second half); a second press
+// arriving inside that window consumes it as a double-tap instead. 0 =
+// no press awaiting resolution.
+unsigned long pendingPwrPressMs = 0;
 
-// ---- app state: 俳句設定 (read-only mirror of /api/haiku/settings) ----
+// ---- app state: 俳句設定 (mirrors /api/haiku/settings; see below for how
+// this device also writes back to it, unlike every other m5web setting) ----
 String haikuPoemType = "haiku";  // "haiku" or "poem"
 String haikuAuthor;              // "" if unset
 String haikuAutoMode = "none";   // "none"/"generate"/"print"
+
+// Cycle order for BtnA/BtnB on the 俳句設定 screen (see
+// cycleHaikuAutoMode()) — matches the m5webページ's radio order (俳句を作らない
+// -> 自動で俳句作成 -> 自動でプリントまで実行).
+const char *kHaikuAutoModes[] = {"none", "generate", "print"};
+constexpr int kHaikuAutoModeCount = 3;
 
 String apiUrl(const String &path) { return String("http://") + M5WEB_HOST + path; }
 
@@ -287,10 +304,8 @@ void fetchPollSettings() {
 
 // Refetches poemType/author/autoMode from /api/haiku/settings (same
 // endpoint the m5webページ's 「俳句設定」card reads/writes — see
-// src/web_server.cpp's handleHaikuSettingsGet()). This device never writes
-// that endpoint: the screen this feeds (renderHaikuSettings()) is
-// read-only, editing still happens on the phone/web page. Leaves the
-// existing values untouched on any failure, same as fetchPollSettings().
+// src/web_server.cpp's handleHaikuSettingsGet()). Leaves the existing
+// values untouched on any failure, same as fetchPollSettings().
 void fetchHaikuSettings() {
     HTTPClient http;
     if (!http.begin(apiUrl("/api/haiku/settings"))) return;
@@ -308,6 +323,52 @@ void fetchHaikuSettings() {
     haikuPoemType = String((const char *)(doc["poemType"] | "haiku"));
     haikuAuthor = String((const char *)(doc["author"] | ""));
     haikuAutoMode = String((const char *)(doc["autoMode"] | "none"));
+}
+
+// POSTs a single field (e.g. field="poemType", value="poem") to
+// /api/haiku/settings — the handler only touches whichever form fields
+// are present (src/web_server.cpp's handleHaikuSettingsSet()), so this
+// never disturbs the other field. Author editing isn't exposed from this
+// device (no text entry without a touchscreen/keyboard), only poemType
+// and autoMode — see togglePoemType()/cycleHaikuAutoMode(). Returns
+// false on any network/HTTP failure; callers just leave the local
+// (already-updated) state as the optimistic value either way, same as
+// the rest of this sketch's fire-and-forget POSTs (see
+// printGalleryEntry()).
+bool postHaikuSetting(const String &field, const String &value) {
+    HTTPClient http;
+    if (!http.begin(apiUrl("/api/haiku/settings"))) return false;
+    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+    int code = http.POST(field + "=" + value);
+    http.end();
+    return code == 200;
+}
+
+// Top power button, single press, 俳句設定 screen only (see
+// handlePowerButton()) — flips haiku<->poem, same toggle the m5webページ's
+// poemType radio or the ATOM Lite button's own double-click does.
+void togglePoemType() {
+    haikuPoemType = haikuPoemType == "poem" ? "haiku" : "poem";
+    postHaikuSetting("poemType", haikuPoemType);
+    beepClick();
+    renderHaikuSettings();
+}
+
+// BtnA (dir=-1, back) / BtnB (dir=+1, forward) on the 俳句設定 screen — steps
+// haikuAutoMode through kHaikuAutoModes, wrapping in both directions.
+void cycleHaikuAutoMode(int dir) {
+    int idx = 0;
+    for (int i = 0; i < kHaikuAutoModeCount; i++) {
+        if (haikuAutoMode == kHaikuAutoModes[i]) {
+            idx = i;
+            break;
+        }
+    }
+    idx = (idx + dir + kHaikuAutoModeCount) % kHaikuAutoModeCount;
+    haikuAutoMode = kHaikuAutoModes[idx];
+    postHaikuSetting("autoMode", haikuAutoMode);
+    beepClick();
+    renderHaikuSettings();
 }
 
 bool printGalleryEntry(uint16_t id) {
@@ -455,12 +516,14 @@ void render() {
     canvas.pushSprite(0, 0);
 }
 
-// Read-only mirror of the m5webページ's 「俳句設定」card, shown in place of
-// the gallery after a double-tap of the top power button (see
-// handlePowerButton()). BtnA/BtnB/BtnC do nothing here (see
-// handleButtons()'s screen guard) — this device never writes
-// /api/haiku/settings, so changing anything still means going to the
-// phone/web page. Another double-tap of the power button goes back.
+// Mirror of the m5webページ's 「俳句設定」card, shown in place of the
+// gallery after a double-tap of the top power button (see
+// handlePowerButton()). Two of its three fields are editable right from
+// this screen — a single press of that same power button flips poemType
+// (togglePoemType()), and BtnA/BtnB step autoMode back/forward
+// (cycleHaikuAutoMode()) — both POST straight to /api/haiku/settings.
+// Author isn't editable here (no text entry without a touchscreen), only
+// shown. Another double-tap of the power button goes back to the gallery.
 void renderHaikuSettings() {
     canvas.fillSprite(WHITE);
     canvas.setTextSize(3);
@@ -481,7 +544,9 @@ void renderHaikuSettings() {
 
     canvas.drawString("著者名: " + (haikuAuthor.length() > 0 ? haikuAuthor : String("（未設定）")), MARGIN, y);
 
-    drawLegend(nullptr, nullptr, "トップボタンをダブルタップでギャラリーへ");
+    canvas.drawString("トップボタン: 1回押し=俳句⇄ポエム / ダブルタップ=ギャラリーへ", MARGIN,
+                       SCREEN_H - LEGEND_H - META_H);
+    drawLegend("[A] 自動化 ←", nullptr, "[B] 自動化 →");
 
     canvas.pushSprite(0, 0);
 }
@@ -566,15 +631,20 @@ void pollGallery() {
 // presses landing on "次の次"/"前の前" (one press's worth further than a
 // single tap) is confirmed audibly, not just visually.
 //
-// Only meaningful on the gallery screen — see handlePowerButton() for the
-// 俳句設定 screen, which these three buttons don't touch at all.
+// On the 俳句設定 screen, BtnA/BtnB instead step autoMode back/forward
+// (BtnC does nothing there) — see cycleHaikuAutoMode() and
+// handlePowerButton() for that screen's other control, the power button.
 void handleButtons() {
-    if (currentScreen != Screen::kGallery) return;
-
     bool a = M5.BtnA.wasPressed();
     bool b = M5.BtnB.wasPressed();
     bool c = M5.BtnC.wasPressed();
     if (!a && !b && !c) return;
+
+    if (currentScreen == Screen::kHaikuSettings) {
+        if (a) cycleHaikuAutoMode(-1);
+        if (b) cycleHaikuAutoMode(1);
+        return;
+    }
 
     if (a || b) {
         char thisButton = a ? 'A' : 'B';
@@ -633,31 +703,50 @@ void handleButtons() {
 
 // M5.BtnPWR is the physical power button on top of the M5PaperColor
 // (distinct from BtnA/BtnB/BtnC, which sit under the screen — see
-// handleButtons()). A single press keeps its stock power-on/off behavior
-// (handled entirely by M5Unified/the hardware, not this sketch); a
-// double-tap within kDoubleTapWindowMs toggles between the gallery and a
-// read-only view of the 俳句設定 card (see renderHaikuSettings()), reusing
-// the same timing window as BtnA/BtnB's double-tap above. Runs every
-// loop() regardless of currentScreen, since it's the only way back out of
-// the 俳句設定 screen.
+// handleButtons()). Unlike BtnA/BtnB's double-tap detection above (which
+// only needs to distinguish "was this the 2nd press of a pair" for an
+// audible beep, not to gate different actions), single vs. double here
+// select two different, mutually exclusive actions — so a lone press
+// can't act immediately; it has to wait out kDoubleTapWindowMs first, in
+// case a second press turns it into a double-tap instead. That's the same
+// deferred-resolution shape as ATOM Lite's checkButton() (src/main.cpp),
+// just driven by M5Unified's per-loop wasPressed() edges instead of a raw
+// digitalRead():
+//   - single press, resolved once the window passes with no 2nd press ->
+//     on Screen::kHaikuSettings, toggles poemType (togglePoemType()); on
+//     Screen::kGallery, does nothing here at all — a single press keeps
+//     the button's stock power-on/off behavior, handled entirely by
+//     M5Unified/the hardware, not this sketch.
+//   - double-tap (2nd press within the window) -> switches between the
+//     gallery and the 俳句設定 screen (renderHaikuSettings()).
+// Runs every loop() regardless of currentScreen, since it's the only way
+// back out of the 俳句設定 screen.
 void handlePowerButton() {
-    if (!M5.BtnPWR.wasPressed()) return;
-
-    unsigned long now = millis();
-    if (lastPwrPressMs != 0 && (now - lastPwrPressMs) <= kDoubleTapWindowMs) {
-        lastPwrPressMs = 0;  // consumed
-        beepDoubleClick();
-        if (currentScreen == Screen::kGallery) {
-            currentScreen = Screen::kHaikuSettings;
-            fetchHaikuSettings();
-            renderHaikuSettings();
+    if (M5.BtnPWR.wasPressed()) {
+        unsigned long now = millis();
+        if (pendingPwrPressMs != 0 && (now - pendingPwrPressMs) <= kDoubleTapWindowMs) {
+            pendingPwrPressMs = 0;  // consumed — this was the 2nd press
+            beepDoubleClick();
+            if (currentScreen == Screen::kGallery) {
+                currentScreen = Screen::kHaikuSettings;
+                fetchHaikuSettings();
+                renderHaikuSettings();
+            } else {
+                currentScreen = Screen::kGallery;
+                statusMsg = "";
+                render();
+            }
         } else {
-            currentScreen = Screen::kGallery;
-            statusMsg = "";
-            render();
+            pendingPwrPressMs = now;
         }
-    } else {
-        lastPwrPressMs = now;
+        return;
+    }
+
+    // A lone press only becomes its single-press action once the
+    // double-tap window has passed without a second press.
+    if (pendingPwrPressMs != 0 && (millis() - pendingPwrPressMs) > kDoubleTapWindowMs) {
+        pendingPwrPressMs = 0;
+        if (currentScreen == Screen::kHaikuSettings) togglePoemType();
     }
 }
 
