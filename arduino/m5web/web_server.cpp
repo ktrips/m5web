@@ -218,9 +218,7 @@ void handleImageUploadChunk() {
 void handleCameraStatus() {
     CameraLink::Status s = CameraLink::status();
     String json = "{";
-    String modeStr = s.mode == CameraLink::Mode::kPreview     ? "preview"
-                     : s.mode == CameraLink::Mode::kAutoHaiku ? "autoHaiku"
-                                                               : "auto";
+    String modeStr = s.mode == CameraLink::Mode::kPreview ? "preview" : "auto";
     json += "\"mode\":\"" + modeStr + "\",";
     json += "\"frameReady\":" + String(s.frameReady ? "true" : "false") + ",";
     json += "\"pendingPrint\":" + String(s.pendingPrint ? "true" : "false") + ",";
@@ -250,15 +248,12 @@ void handleCameraModeSet() {
         return;
     }
     String m = server.arg("mode");
-    if (m != "auto" && m != "preview" && m != "autoHaiku") {
-        sendPlain(400, "mode must be 'auto', 'preview', or 'autoHaiku'");
+    if (m != "auto" && m != "preview") {
+        sendPlain(400, "mode must be 'auto' or 'preview'");
         return;
     }
     Serial.printf("[web] camera mode set to '%s'\n", m.c_str());
-    CameraLink::Mode mode = m == "preview"     ? CameraLink::Mode::kPreview
-                             : m == "autoHaiku" ? CameraLink::Mode::kAutoHaiku
-                                                 : CameraLink::Mode::kAuto;
-    CameraLink::setMode(mode);
+    CameraLink::setMode(m == "preview" ? CameraLink::Mode::kPreview : CameraLink::Mode::kAuto);
     sendPlain(200, "OK");
 }
 
@@ -449,13 +444,15 @@ void handleOpenAISettingsSet() {
 // setting card.
 void handleHaikuSettingsGet() {
     String json = "{\"poemType\":\"" + jsonEscape(Haiku::poemType().c_str()) + "\"" +
-                  ",\"author\":\"" + jsonEscape(Haiku::author().c_str()) + "\"}";
+                  ",\"author\":\"" + jsonEscape(Haiku::author().c_str()) + "\"" +
+                  ",\"autoMode\":\"" + jsonEscape(Haiku::autoMode().c_str()) + "\"}";
     server.send(200, "application/json", json);
 }
 
 void handleHaikuSettingsSet() {
     if (server.hasArg("poemType")) Haiku::setPoemType(server.arg("poemType"));
     if (server.hasArg("author")) Haiku::setAuthor(server.arg("author"));
+    if (server.hasArg("autoMode")) Haiku::setAutoMode(server.arg("autoMode"));
     sendPlain(200, "OK");
 }
 

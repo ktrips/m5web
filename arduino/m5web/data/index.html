@@ -253,8 +253,7 @@
         <input type="radio" name="camMode" id="camModePreview" value="preview">
         <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷）</label>
       </div>
-      <p class="meta">ウェブ上に表示された後に印刷ボタンを押すか、ATOMのボタンを押して印刷。
-      自動俳句印刷モードは「俳句設定」カードに移動しました。</p>
+      <p class="meta">ウェブ上に表示された後に印刷ボタンを押すか、ATOMのボタンを押して印刷。</p>
       <label>写真の回転（次に受信するフレームから適用）</label>
       <button type="button" class="secondary full" id="camDefaultRotateBtn">回転（現在: <span id="camDefaultRotateVal">0</span>°）</button>
       <p class="meta">押すたびに時計回りに90°ずつ回転します。すでに受信・表示中の1枚には遡って反映されません。</p>
@@ -278,16 +277,25 @@
       <label style="margin-top:12px">著者名（任意）</label>
       <input type="text" id="haikuAuthor" placeholder="例: 芭蕉">
       <p class="meta">入力すると、印刷時に左端下へ縦書きで小さく添えられます。空欄なら何も印刷されません。</p>
-      <div class="msg" id="haikuMsg"></div>
 
-      <div class="radio-line" style="margin-top:16px">
-        <input type="radio" name="camMode" id="camModeAutoHaiku" value="autoHaiku">
-        <label for="camModeAutoHaiku" style="margin:0;color:var(--text)">自動俳句印刷モード（M5StickV撮影→自動生成→両方印刷）</label>
+      <label style="margin-top:16px">印刷の自動化</label>
+      <div class="radio-line">
+        <input type="radio" name="haikuAutoMode" id="haikuAutoNone" value="none" checked>
+        <label for="haikuAutoNone" style="margin:0;color:var(--text)">俳句を作らない（デフォルト。「俳句を作る」ボタンを押した時だけ生成）</label>
       </div>
-      <p class="meta">M5StickVカメラの扱いをこのモードにすると、撮影のたびに上で選んだ形式で自動生成・印刷します。
-      写真の印刷はATOM Lite側で自動的に行われますが、俳句・ポエムの生成と印刷はこのページを開いている
-      ブラウザが行うため、<b>m5webページを開いたままにしておく必要があります</b>
+      <div class="radio-line">
+        <input type="radio" name="haikuAutoMode" id="haikuAutoGenerate" value="generate">
+        <label for="haikuAutoGenerate" style="margin:0;color:var(--text)">自動で俳句作成（撮影・アップロード時に自動生成してボックスに表示。印刷はボタンで）</label>
+      </div>
+      <div class="radio-line">
+        <input type="radio" name="haikuAutoMode" id="haikuAutoPrint" value="print">
+        <label for="haikuAutoPrint" style="margin:0;color:var(--text)">自動でプリントまで実行（撮影・アップロード時に自動生成・自動印刷）</label>
+      </div>
+      <p class="meta">M5StickV撮影・写真アップロードのどちらでも、ここで選んだ自動化レベルが適用されます
+      （上の「M5StickV設定」の事後閲覧／プレビュー確認モードとは独立した設定です）。
+      自動生成・自動印刷はこのページを開いているブラウザが行うため、<b>m5webページを開いたままにしておく必要があります</b>
       （OpenAI設定でAPIキーも登録しておいてください）。</p>
+      <div class="msg" id="haikuMsg"></div>
     </div>
 
     <div class="card">
@@ -499,6 +507,7 @@ $("fileInput").addEventListener("change", (e) => {
     $("previewWrap").classList.remove("hidden");
     $("imageControls").classList.remove("hidden");
     renderPreview();
+    autoHaikuFor($("previewCanvas"), $("uploadHaikuBtn"), $("uploadHaikuText"), $("uploadHaikuPrintBtn"), $("uploadHaikuMsg"));
   };
   img.src = URL.createObjectURL(file);
 });
@@ -796,7 +805,7 @@ async function refreshCameraStatus() {
     const r = await fetch("/api/camera/status");
     const s = await r.json();
 
-    const modeElId = s.mode === "preview" ? "camModePreview" : s.mode === "autoHaiku" ? "camModeAutoHaiku" : "camModeAuto";
+    const modeElId = s.mode === "preview" ? "camModePreview" : "camModeAuto";
     document.getElementById(modeElId).checked = true;
     $("camDefaultRotateVal").textContent = s.rotationDeg;
 
@@ -831,7 +840,7 @@ async function refreshCameraStatus() {
     if (s.frameSeq !== camLastSeq) {
       camLastSeq = s.frameSeq;
       await loadCameraFrame(s.width, s.height);
-      if (s.mode === "autoHaiku") runAutoHaiku();
+      autoHaikuFor($("camPreviewCanvas"), $("camHaikuBtn"), $("camHaikuText"), $("camHaikuPrintBtn"), $("camHaikuMsg"));
     }
   } catch (e) {
     // transient network error while polling; try again next interval
@@ -1044,6 +1053,11 @@ function currentPoemType() {
   return el ? el.value : "haiku";
 }
 
+function currentHaikuAutoMode() {
+  const el = document.querySelector('input[name="haikuAutoMode"]:checked');
+  return el ? el.value : "none";
+}
+
 function updateHaikuLabels(poemType) {
   const noun = poemType === "poem" ? "ポエム" : "俳句";
   $("camHaikuBtn").textContent = noun + "を作る";
@@ -1066,6 +1080,8 @@ async function refreshHaikuSettings() {
     const poemType = s.poemType === "poem" ? "poem" : "haiku";
     $(poemType === "poem" ? "poemTypePoem" : "poemTypeHaiku").checked = true;
     $("haikuAuthor").value = s.author || "";
+    const autoMode = s.autoMode === "generate" || s.autoMode === "print" ? s.autoMode : "none";
+    $(autoMode === "print" ? "haikuAutoPrint" : autoMode === "generate" ? "haikuAutoGenerate" : "haikuAutoNone").checked = true;
     updateHaikuLabels(poemType);
   } catch (e) {
     // transient network error; leave the fields as-is and try again next poll
@@ -1076,12 +1092,13 @@ async function saveHaikuSettings() {
   const msg = $("haikuMsg");
   const poemType = currentPoemType();
   const author = $("haikuAuthor").value.trim();
+  const autoMode = currentHaikuAutoMode();
   updateHaikuLabels(poemType);
   try {
     const r = await fetch("/api/haiku/settings", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "poemType=" + poemType + "&author=" + encodeURIComponent(author),
+      body: "poemType=" + poemType + "&author=" + encodeURIComponent(author) + "&autoMode=" + autoMode,
     });
     if (!r.ok) throw new Error(await r.text());
     showMsg(msg, "保存しました", "ok");
@@ -1090,7 +1107,7 @@ async function saveHaikuSettings() {
   }
 }
 
-document.querySelectorAll('input[name="poemType"]').forEach((el) => {
+document.querySelectorAll('input[name="poemType"], input[name="haikuAutoMode"]').forEach((el) => {
   el.addEventListener("change", saveHaikuSettings);
 });
 $("haikuAuthor").addEventListener("change", saveHaikuSettings);
@@ -1199,23 +1216,26 @@ async function requestHaiku(canvas, btn, textEl, printBtn, msgEl) {
   }
 }
 
-// Auto俳句印刷モード: called from refreshCameraStatus() whenever a new
-// M5StickV frame shows up while that mode is selected. The photo itself is
-// already printed by ATOM Lite the moment it receives the frame (same as
-// 事後閲覧方式) — this only handles the haiku half, which needs the
-// browser (canvas -> generateHaikuFromCanvas() above, which calls OpenAI
-// directly). Reuses requestHaiku()/printHaikuFromText() as-is, so it shows
-// the same status messages a manual click would and, via
-// camHaikuBtn.disabled, can't run concurrently with a manual "俳句を作る"
-// press. Not queued: if a second frame arrives while this is still
-// running (a multi-second OpenAI round-trip), that frame's photo still
-// auto-prints normally, but its haiku is skipped — only the frame being
-// processed when this call started gets one.
-async function runAutoHaiku() {
-  if ($("camHaikuBtn").disabled) return;
-  const ok = await requestHaiku(
-    $("camPreviewCanvas"), $("camHaikuBtn"), $("camHaikuText"), $("camHaikuPrintBtn"), $("camHaikuMsg"));
-  if (ok) await printHaikuFromText($("camHaikuText"), $("camHaikuPrintBtn"), $("camHaikuMsg"));
+// 俳句設定カードの「印刷の自動化」設定: called both from refreshCameraStatus()
+// whenever a new M5StickV frame shows up, and from the file-upload handler
+// right after a photo is chosen. Independent of the M5StickV設定 card's
+// auto/preview print mode — that only decides whether the *photo* itself
+// auto-prints (entirely ATOM Lite-side); this decides whether the haiku/poem
+// half also runs automatically, and how far:
+//   "none"     - do nothing; only a manual "俳句を作る" press generates one
+//   "generate" - auto-generate and show it in the editable box, no auto-print
+//   "print"    - auto-generate and auto-print, same as a manual generate
+//                followed by a manual print
+// Reuses requestHaiku()/printHaikuFromText() as-is, so it shows the same
+// status messages a manual click would and, via btn.disabled, can't run
+// concurrently with a manual press on the same card. Not queued: if a second
+// photo arrives while this is still running (a multi-second OpenAI
+// round-trip), its haiku is simply skipped.
+async function autoHaikuFor(canvas, btn, textEl, printBtn, msgEl) {
+  const mode = currentHaikuAutoMode();
+  if (mode === "none" || btn.disabled) return;
+  const ok = await requestHaiku(canvas, btn, textEl, printBtn, msgEl);
+  if (ok && mode === "print") await printHaikuFromText(textEl, printBtn, msgEl);
 }
 
 $("camHaikuBtn").addEventListener("click", () => {

@@ -28,16 +28,14 @@
 // caption under the image on the m5web page and in the gallery.
 namespace CameraLink {
 
-// kAuto/kPreview print (or hold) the raw photo only, same as ever. kAutoHaiku
-// also prints the photo immediately (like kAuto — that part is entirely
-// ATOM Lite-side, same as always), but additionally expects the m5web page
-// to be open in a browser: the browser is what notices the new frame (via
-// its regular /api/camera/status poll), generates a haiku from it through
-// OpenAI, and prints that as a second job — OpenAI access and the
-// haiku's vertical-layout rendering both live in data/index.html's JS,
-// not here (see that file's runAutoHaiku()), since this project has no
-// on-device Japanese font to render the haiku text into a printable image.
-enum class Mode { kAuto, kPreview, kAutoHaiku };
+// kAuto prints every received photo immediately; kPreview holds it for
+// review on the m5web page instead. Independent of this: the "俳句設定"
+// card's own auto-haiku setting (see haiku.h's AutoMode) decides, entirely
+// browser-side, whether a haiku/poem also gets generated (and optionally
+// printed) from the same frame — this module has no notion of haiku at
+// all beyond bumping frameSeq so the browser's /api/camera/status poll can
+// notice a new frame either way.
+enum class Mode { kAuto, kPreview };
 
 // Matches maixpy/m5web_capture.py's MAX_LABEL_LEN; longer labels are
 // truncated on receipt (the byte count on the wire is still consumed in

@@ -95,12 +95,10 @@ void printHeartbeat() {
     }
 
     CameraLink::Status cs = CameraLink::status();
-    const char *modeStr = cs.mode == CameraLink::Mode::kPreview     ? "preview"
-                          : cs.mode == CameraLink::Mode::kAutoHaiku ? "autoHaiku"
-                                                                     : "auto";
+    const char *modeStr = cs.mode == CameraLink::Mode::kPreview ? "preview" : "auto";
     Serial.printf("camera: mode=%s frameReady=%d pendingPrint=%d last=%ux%u brightness=%d contrast=%d\n", modeStr,
                   cs.frameReady, cs.pendingPrint, cs.width, cs.height, cs.brightness, cs.contrast);
-    Serial.printf("poem: type=%s\n", Haiku::poemType().c_str());
+    Serial.printf("poem: type=%s autoMode=%s\n", Haiku::poemType().c_str(), Haiku::autoMode().c_str());
     Serial.println("-----------------------");
 }
 

@@ -124,14 +124,12 @@ void rotateBufferOnce() {
 const char *modeName(Mode m) {
     switch (m) {
         case Mode::kPreview: return "preview";
-        case Mode::kAutoHaiku: return "autoHaiku";
         default: return "auto";
     }
 }
 
 Mode modeFromName(const String &s) {
     if (s == "preview") return Mode::kPreview;
-    if (s == "autoHaiku") return Mode::kAutoHaiku;
     return Mode::kAuto;
 }
 
@@ -206,17 +204,13 @@ void finishIncomingFrame(uint8_t receivedChecksum) {
                   checksumOk ? "ok" : "FAIL");
     Gallery::save(frameBuffer, (size_t)Printer::kPrintWidthBytes * frameHeight, frameHeight, frameLabel);
     Led::notifyNewImage();
-    // kAutoHaiku prints the photo immediately too (its haiku half is
-    // handled entirely by the browser polling /api/camera/status — see
-    // the Mode enum's doc comment in camera_link.h).
-    if ((currentMode == Mode::kAuto || currentMode == Mode::kAutoHaiku) && checksumOk) {
+    if (currentMode == Mode::kAuto && checksumOk) {
         pendingPrint = false;
         printStoredFrame();
         Serial.println("[camera_link] auto-printed");
     } else {
-        // Preview mode, or a corrupted frame in auto/autoHaiku mode: never
-        // print without either an explicit checksum pass or a human
-        // confirming.
+        // Preview mode, or a corrupted frame in auto mode: never print
+        // without either an explicit checksum pass or a human confirming.
         pendingPrint = true;
     }
     Led::setCameraPending(pendingPrint);
