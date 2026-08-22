@@ -46,7 +46,7 @@ uint32_t checksumAccum = 0;
 Dither::RowDitherer ditherer;
 
 Preferences prefs;
-Mode currentMode = Mode::kAuto;
+Mode currentMode = Mode::kPreview;
 int8_t currentBrightness = 0;  // -100..100, same range/meaning as the JS slider
 int8_t currentContrast = 0;
 uint16_t currentRotationDeg = 0;  // 0/90/180/270, applied to every frame as it's received
@@ -310,7 +310,7 @@ void handleByte(uint8_t b) {
 void begin() {
     Serial1.begin(kBaud, SERIAL_8N1, kRxPin, kTxPin);
     prefs.begin("m5web_cam", false);
-    currentMode = modeFromName(prefs.getString("mode", "auto"));
+    currentMode = modeFromName(prefs.getString("mode", "preview"));
     currentBrightness = clampAdjust(prefs.getInt("brightness", 0));
     currentContrast = clampAdjust(prefs.getInt("contrast", 0));
     currentRotationDeg = prefs.getUShort("rotationDeg", 0) % 360;
