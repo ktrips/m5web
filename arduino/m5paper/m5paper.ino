@@ -11,7 +11,10 @@
 // /api/gallery* endpoints (see ../../README.md's API table).
 //
 // BtnA/BtnB step through the gallery (newest-first, same order as the web
-// UI), BtnC prints whichever entry is currently shown.
+// UI), BtnC prints whichever entry is currently shown. Double-tapping the
+// top power button (M5.BtnPWR) switches to a read-only view of the
+// m5webページ's 「俳句設定」card (poemType/author/autoMode) and back — see
+// handlePowerButton()/renderHaikuSettings().
 //
 // Target hardware: M5PaperColor (ESP32-S3, ~4" E Ink Spectra 6 color
 // panel, 3 physical buttons — BtnA/BtnB/BtnC). This is a DIFFERENT board
@@ -50,6 +53,11 @@
 //     refresh; this app redraws rarely (on poll changes / button
 //     presses), not continuously, so the extra refresh time isn't a
 //     concern here the way it would be for an animated UI.
+//   - M5.BtnPWR (the top power button, used for the double-tap ->
+//     俳句設定 screen — see handlePowerButton()) is named per M5Stack's
+//     button docs cited above; double-check it against M5Unified's actual
+//     M5PaperColor board profile, since it isn't vendored in this repo and
+//     so couldn't be verified directly here.
 //
 // Known limitation: there's currently no in-app way to switch to a
 // *different* already-reachable network — only to recover when the saved
@@ -107,9 +115,12 @@ M5Canvas canvas(&M5.Display);
 // ---- layout (landscape — see the orientation caveat above) ----
 constexpr int SCREEN_W = 600;
 constexpr int SCREEN_H = 400;
-constexpr int MARGIN = 10;
-constexpr int META_H = 20;
-constexpr int LEGEND_H = 26;
+// Kept as small as the meta/legend text (textSize 2) stays readable at, so
+// the photo itself — the whole point of this screen — gets as much of the
+// 600x400 panel as possible.
+constexpr int MARGIN = 6;
+constexpr int META_H = 18;
+constexpr int LEGEND_H = 24;
 
 // ---- WiFi setup (AP mode + captive portal) ----
 constexpr uint8_t kDnsPort = 53;
@@ -145,6 +156,25 @@ unsigned long lastNavPressMs = 0;
 uint16_t loadedEntryId = 0xFFFF;  // id currently held in frameBuf, or 0xFFFF (no valid id) if none
 uint8_t *frameBuf = nullptr;
 String statusMsg;
+
+// ---- app state: screen switching ----
+// Only two screens exist: the gallery (default) and a read-only view of
+// the m5webページ's 「俳句設定」card (poemType/author/autoMode — see
+// src/haiku.h), reached by double-tapping the top power button
+// (M5.BtnPWR) from either screen — see handlePowerButton(). BtnA/BtnB/BtnC
+// only do anything while Screen::kGallery is active (see handleButtons()).
+enum class Screen { kGallery, kHaikuSettings };
+Screen currentScreen = Screen::kGallery;
+
+// Double-tap tracking for the top power button, same shape as
+// lastNavButton/lastNavPressMs above but for a single button so it only
+// needs a timestamp (no "which button" to remember).
+unsigned long lastPwrPressMs = 0;
+
+// ---- app state: 俳句設定 (read-only mirror of /api/haiku/settings) ----
+String haikuPoemType = "haiku";  // "haiku" or "poem"
+String haikuAuthor;              // "" if unset
+String haikuAutoMode = "none";   // "none"/"generate"/"print"
 
 String apiUrl(const String &path) { return String("http://") + M5WEB_HOST + path; }
 
@@ -255,6 +285,31 @@ void fetchPollSettings() {
     }
 }
 
+// Refetches poemType/author/autoMode from /api/haiku/settings (same
+// endpoint the m5webページ's 「俳句設定」card reads/writes — see
+// src/web_server.cpp's handleHaikuSettingsGet()). This device never writes
+// that endpoint: the screen this feeds (renderHaikuSettings()) is
+// read-only, editing still happens on the phone/web page. Leaves the
+// existing values untouched on any failure, same as fetchPollSettings().
+void fetchHaikuSettings() {
+    HTTPClient http;
+    if (!http.begin(apiUrl("/api/haiku/settings"))) return;
+    int code = http.GET();
+    if (code != 200) {
+        http.end();
+        return;
+    }
+    String body = http.getString();
+    http.end();
+
+    StaticJsonDocument<256> doc;
+    if (deserializeJson(doc, body) != DeserializationError::Ok) return;
+
+    haikuPoemType = String((const char *)(doc["poemType"] | "haiku"));
+    haikuAuthor = String((const char *)(doc["author"] | ""));
+    haikuAutoMode = String((const char *)(doc["autoMode"] | "none"));
+}
+
 bool printGalleryEntry(uint16_t id) {
     String path = "/api/gallery/print?id=" + String(id);
     HTTPClient http;
@@ -270,15 +325,15 @@ bool printGalleryEntry(uint16_t id) {
 
 // Draws the packed 1bpp frame (MSB-first, 1=black) into `canvas`, nearest-
 // neighbor scaled to fit within (destX, destY, destW, destH) — capped at
-// 2x so a small frame doesn't get blown up past legibility — and centered
-// within that box.
+// 4x so a short/narrow frame doesn't get blown up past legibility — and
+// centered within that box.
 void drawFrame(const uint8_t *buf, uint16_t srcW, uint16_t srcH, int destX, int destY, int destW, int destH) {
     float scale = min(destW / (float)srcW, destH / (float)srcH);
-    // Capped well above what destW/destH alone would ever produce for a
-    // 384-dot-wide print image on this 600x400 screen — this cap only
-    // matters for short/narrow frames, so it's about "don't blow up a
+    // In practice destW/destH (see render()) is almost always the binding
+    // constraint for a normal print-sized photo — this cap only matters
+    // for an unusually short/narrow frame, so it's about "don't blow up a
     // tiny frame to blocky pixels", not a limit users will normally hit.
-    if (scale > 3.0f) scale = 3.0f;
+    if (scale > 4.0f) scale = 4.0f;
     int drawW = (int)(srcW * scale);
     int drawH = (int)(srcH * scale);
     int offX = destX + (destW - drawW) / 2;
@@ -400,6 +455,37 @@ void render() {
     canvas.pushSprite(0, 0);
 }
 
+// Read-only mirror of the m5webページ's 「俳句設定」card, shown in place of
+// the gallery after a double-tap of the top power button (see
+// handlePowerButton()). BtnA/BtnB/BtnC do nothing here (see
+// handleButtons()'s screen guard) — this device never writes
+// /api/haiku/settings, so changing anything still means going to the
+// phone/web page. Another double-tap of the power button goes back.
+void renderHaikuSettings() {
+    canvas.fillSprite(WHITE);
+    canvas.setTextSize(3);
+    canvas.setTextColor(BLACK);
+    canvas.drawString("俳句設定", MARGIN, MARGIN);
+
+    canvas.setTextSize(2);
+    int y = MARGIN + 60;
+    String typeLabel = haikuPoemType == "poem" ? "ポエム（30文字程度の自由詩）" : "俳句（五七五・3行）";
+    canvas.drawString("形式: " + typeLabel, MARGIN, y);
+    y += 36;
+
+    String autoLabel = haikuAutoMode == "print"      ? "自動でプリントまで実行"
+                        : haikuAutoMode == "generate" ? "自動で俳句作成"
+                                                       : "俳句を作らない（デフォルト）";
+    canvas.drawString("印刷の自動化: " + autoLabel, MARGIN, y);
+    y += 36;
+
+    canvas.drawString("著者名: " + (haikuAuthor.length() > 0 ? haikuAuthor : String("（未設定）")), MARGIN, y);
+
+    drawLegend(nullptr, nullptr, "トップボタンをダブルタップでギャラリーへ");
+
+    canvas.pushSprite(0, 0);
+}
+
 // Refetches the gallery list. Tries to keep the same entry selected across
 // the refresh (matched by id, not index — the list is newest-first, so a
 // new capture shifts every existing entry's index down by one), and
@@ -479,7 +565,12 @@ void pollGallery() {
 // beepDoubleClick() instead of beepClick() on its second press, so two
 // presses landing on "次の次"/"前の前" (one press's worth further than a
 // single tap) is confirmed audibly, not just visually.
+//
+// Only meaningful on the gallery screen — see handlePowerButton() for the
+// 俳句設定 screen, which these three buttons don't touch at all.
 void handleButtons() {
+    if (currentScreen != Screen::kGallery) return;
+
     bool a = M5.BtnA.wasPressed();
     bool b = M5.BtnB.wasPressed();
     bool c = M5.BtnC.wasPressed();
@@ -537,6 +628,36 @@ void handleButtons() {
             statusMsg = "印刷に失敗しました";
         }
         render();
+    }
+}
+
+// M5.BtnPWR is the physical power button on top of the M5PaperColor
+// (distinct from BtnA/BtnB/BtnC, which sit under the screen — see
+// handleButtons()). A single press keeps its stock power-on/off behavior
+// (handled entirely by M5Unified/the hardware, not this sketch); a
+// double-tap within kDoubleTapWindowMs toggles between the gallery and a
+// read-only view of the 俳句設定 card (see renderHaikuSettings()), reusing
+// the same timing window as BtnA/BtnB's double-tap above. Runs every
+// loop() regardless of currentScreen, since it's the only way back out of
+// the 俳句設定 screen.
+void handlePowerButton() {
+    if (!M5.BtnPWR.wasPressed()) return;
+
+    unsigned long now = millis();
+    if (lastPwrPressMs != 0 && (now - lastPwrPressMs) <= kDoubleTapWindowMs) {
+        lastPwrPressMs = 0;  // consumed
+        beepDoubleClick();
+        if (currentScreen == Screen::kGallery) {
+            currentScreen = Screen::kHaikuSettings;
+            fetchHaikuSettings();
+            renderHaikuSettings();
+        } else {
+            currentScreen = Screen::kGallery;
+            statusMsg = "";
+            render();
+        }
+    } else {
+        lastPwrPressMs = now;
     }
 }
 
@@ -855,6 +976,7 @@ unsigned long lastSettingsPollMs = 0;
 void loop() {
     M5.update();
     handleButtons();
+    handlePowerButton();
     printHeartbeat();
 
     unsigned long now = millis();
@@ -862,7 +984,12 @@ void loop() {
         lastSettingsPollMs = now;
         fetchPollSettings();
     }
-    if (autoRefreshEnabled && (now - lastPollMs > pollIntervalMs)) {
+    // Paused while the 俳句設定 screen is showing so a timer tick can't
+    // yank the display back to the gallery via pollGallery()'s render() —
+    // it picks back up (and immediately catches up, since lastPollMs kept
+    // advancing past pollIntervalMs while paused) as soon as a power-button
+    // double-tap returns to Screen::kGallery.
+    if (autoRefreshEnabled && currentScreen == Screen::kGallery && (now - lastPollMs > pollIntervalMs)) {
         lastPollMs = now;
         pollGallery();
     }
