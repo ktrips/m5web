@@ -39,6 +39,12 @@ pio device monitor      # シリアルログ確認（115200bps）
 
 `uploadfs` を忘れると `/` にアクセスした際 "index.html missing" と表示される。
 
+書き込み中に`esptool`が`Changing baud rate to 1500000...`の直後に
+`IndexError: index out of range`で落ちる場合は、`m5stack-atom`ボードの既定書き込み速度が
+CP210x等のUSBシリアル変換チップ・ケーブル・USBハブとの相性で不安定になっている可能性がある。
+`platformio.ini`の`upload_speed = 460800`（本リポジトリの既定値）で改善しない場合は、
+さらに`115200`まで下げてみること。
+
 ### Arduino IDE
 
 スケッチは [`arduino/m5web/m5web.ino`](arduino/m5web/m5web.ino)（`src/`・`data/` と同内容のフラット構成コピー。
