@@ -119,6 +119,10 @@
       <span class="badge"><span class="dot" id="statusDot"></span><span id="statusText">確認中…</span></span>
       <span class="badge" id="ipBadge"></span>
     </div>
+    <div class="row" style="margin-top:8px">
+      <span class="badge" id="clockBadge">--:--:--</span>
+      <span class="badge" id="locationBadge">位置情報を取得中…</span>
+    </div>
     <p class="meta">同じWi-Fi内の端末から <b>http://m5web.local</b> にアクセスできます。</p>
   </div>
 
@@ -139,12 +143,20 @@
     <p class="meta">接続に成功すると本機のAPは終了します。iPhoneを同じWi-Fiに繋ぎ直し、<b>http://m5web.local</b> を開いてください。</p>
   </div>
 
+  <div class="card">
+    <h2>ギャラリー <span class="meta" id="galleryCount"></span></h2>
+    <p class="meta">M5StickVで撮った写真・アップロードした写真の保存履歴です（フラッシュ保存、最大20枚）。いっぱいになったら不要なものを削除してください。</p>
+    <div class="gallery-grid" id="galleryGrid"></div>
+    <p class="meta" id="galleryEmpty">まだ保存された写真はありません</p>
+  </div>
+
   <div class="tabs">
-    <button type="button" class="tab-btn active" data-tab="print">プリント</button>
+    <button type="button" class="tab-btn active" data-tab="camera">カメラ</button>
+    <button type="button" class="tab-btn" data-tab="upload">アップロード</button>
     <button type="button" class="tab-btn" data-tab="settings">設定</button>
   </div>
 
-  <div class="tab-content" id="tabPrint">
+  <div class="tab-content" id="tabCamera">
     <div class="card">
       <h2>M5StickVカメラ</h2>
       <p class="meta">M5StickVをシリアル直結すると、撮った写真をここに表示できます。</p>
@@ -164,7 +176,9 @@
       <button class="primary full hidden" id="camHaikuPrintBtn" style="margin-top:8px">俳句プリント</button>
       <div class="msg" id="camHaikuMsg"></div>
     </div>
+  </div>
 
+  <div class="tab-content hidden" id="tabUpload">
     <div class="card">
       <h2>画像を印刷</h2>
       <label class="file-btn primary full" for="fileInput">写真を選択…</label>
@@ -206,13 +220,6 @@
         <button class="primary full hidden" id="uploadHaikuPrintBtn" style="margin-top:8px">俳句プリント</button>
         <div class="msg" id="uploadHaikuMsg"></div>
       </div>
-    </div>
-
-    <div class="card">
-      <h2>ギャラリー <span class="meta" id="galleryCount"></span></h2>
-      <p class="meta">M5StickVで撮った写真・アップロードした写真の保存履歴です（フラッシュ保存、最大20枚）。いっぱいになったら不要なものを削除してください。</p>
-      <div class="gallery-grid" id="galleryGrid"></div>
-      <p class="meta" id="galleryEmpty">まだ保存された写真はありません</p>
     </div>
 
     <div class="card">
@@ -331,7 +338,7 @@
 
     <div class="card">
       <h2>OpenAI設定</h2>
-      <p class="meta">「俳句を作る」ボタン（プリントタブ）でOpenAIの画像認識モデルを使うためのAPIキーです。
+      <p class="meta">「俳句を作る」ボタン（カメラタブ・アップロードタブ）でOpenAIの画像認識モデルを使うためのAPIキーです。
       <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com</a>
       で発行できます。ATOM Lite本体のNVSに保存され、一度保存すると再表示はされません
       （Wi-Fiパスワードと同じ扱いです）。</p>
@@ -340,6 +347,15 @@
       <input type="password" id="openaiApiKey" placeholder="sk-...">
       <button class="primary full" id="openaiSaveBtn" style="margin-top:12px">保存</button>
       <div class="msg" id="openaiMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>QRコード埋め込み（オプショナル）</h2>
+      <p class="meta">URLを入力すると、アップロード画像・俳句プリントの右下に小さなQRコードを重ねて印刷します。空欄なら何も印刷されません（M5StickVカメラの直接印刷には適用されません）。短縮URLなど短い文字列（目安100文字以内）を推奨します。</p>
+      <label>URL</label>
+      <input type="text" id="qrWatermarkUrl" placeholder="https://example.com">
+      <button class="primary full" id="qrWatermarkSaveBtn" style="margin-top:12px">保存</button>
+      <div class="msg" id="qrWatermarkMsg"></div>
     </div>
   </div>
 
@@ -359,9 +375,579 @@ function showMsg(el, text, kind) {
   el.className = "msg show " + kind;
 }
 
+// ---------- QR code encoder (Byte mode only, versions 1-6, all EC levels) ----------
+
+// Minimal QR Code encoder (Byte mode only, versions 1-6, all EC levels).
+// Self-contained implementation of ISO/IEC 18004 for generating a QR
+// module matrix from a UTF-8 byte string, with no external dependencies —
+// see compositeQrWatermark() below for how it's actually used (composited
+// as a small watermark into a print). Versions capped at 6 (~100 ASCII
+// characters at EC level M) since versions 7+ need extra "version
+// information" blocks this encoder doesn't implement — see pickVersion().
+// Cross-checked cell-by-cell against Python's `qrcode` library (same mask
+// forced on both sides) and round-tripped through zbar's decoder across
+// versions 1-6, EC levels L/M/Q/H, and ASCII/Japanese text during
+// development; not a general-purpose QR library beyond that.
+const QR = (function () {
+  "use strict";
+
+  // ---- Galois Field GF(256) for Reed-Solomon, primitive poly 0x11D ----
+  const GF_EXP = new Array(512);
+  const GF_LOG = new Array(256);
+  (function initGF() {
+    let x = 1;
+    for (let i = 0; i < 255; i++) {
+      GF_EXP[i] = x;
+      GF_LOG[x] = i;
+      x <<= 1;
+      if (x & 0x100) x ^= 0x11d;
+    }
+    for (let i = 255; i < 512; i++) GF_EXP[i] = GF_EXP[i - 255];
+  })();
+
+  function gfMul(a, b) {
+    if (a === 0 || b === 0) return 0;
+    return GF_EXP[GF_LOG[a] + GF_LOG[b]];
+  }
+
+  // Generator polynomial for `degree` EC codewords, as coefficient array
+  // (highest degree first), monic.
+  function rsGeneratorPoly(degree) {
+    let poly = [1];
+    for (let i = 0; i < degree; i++) {
+      const next = new Array(poly.length + 1).fill(0);
+      for (let j = 0; j < poly.length; j++) {
+        next[j] ^= gfMul(poly[j], 1);
+        next[j + 1] ^= gfMul(poly[j], GF_EXP[i]);
+      }
+      poly = next;
+    }
+    return poly;
+  }
+
+  function rsEncode(data, ecLen) {
+    const gen = rsGeneratorPoly(ecLen);
+    const res = new Array(data.length + ecLen).fill(0);
+    for (let i = 0; i < data.length; i++) res[i] = data[i];
+    for (let i = 0; i < data.length; i++) {
+      const coef = res[i];
+      if (coef === 0) continue;
+      for (let j = 0; j < gen.length; j++) {
+        res[i + j] ^= gfMul(gen[j], coef);
+      }
+    }
+    return res.slice(data.length);
+  }
+
+  // ---- Version tables (versions 1-6 — see the file header for why) ----
+  // [totalCodewords, ecCodewordsPerBlock, numBlocksGroup1, dataCwGroup1, numBlocksGroup2, dataCwGroup2]
+  // indexed by EC level L/M/Q/H
+  const VERSION_INFO = {
+    1: { L: [26, 7, 1, 19, 0, 0], M: [26, 10, 1, 16, 0, 0], Q: [26, 13, 1, 13, 0, 0], H: [26, 17, 1, 9, 0, 0] },
+    2: { L: [44, 10, 1, 34, 0, 0], M: [44, 16, 1, 28, 0, 0], Q: [44, 22, 1, 22, 0, 0], H: [44, 28, 1, 16, 0, 0] },
+    3: { L: [70, 15, 1, 55, 0, 0], M: [70, 26, 1, 44, 0, 0], Q: [70, 18, 2, 17, 0, 0], H: [70, 22, 2, 13, 0, 0] },
+    4: { L: [100, 20, 1, 80, 0, 0], M: [100, 18, 2, 32, 0, 0], Q: [100, 26, 2, 24, 0, 0], H: [100, 16, 4, 9, 0, 0] },
+    5: { L: [134, 26, 1, 108, 0, 0], M: [134, 24, 2, 43, 0, 0], Q: [134, 18, 2, 15, 2, 16], H: [134, 22, 2, 11, 2, 12] },
+    6: { L: [172, 18, 2, 68, 0, 0], M: [172, 16, 4, 27, 0, 0], Q: [172, 24, 4, 19, 0, 0], H: [172, 28, 4, 15, 0, 0] },
+  };
+
+  const ALIGNMENT_COORDS = {
+    1: [], 2: [6, 18], 3: [6, 22], 4: [6, 26], 5: [6, 30], 6: [6, 34],
+  };
+
+  function charCountBits(version) {
+    return version <= 9 ? 8 : 16; // byte mode
+  }
+
+  function utf8Bytes(str) {
+    return Array.from(new TextEncoder().encode(str));
+  }
+
+  // Picks the smallest version (1-6) that can hold `bytes` in Byte mode at
+  // the given EC level. Capped at 6 rather than the spec's full 1-40 range
+  // because versions 7+ additionally require two 18-bit "version
+  // information" blocks (their own BCH-encoded reserved areas near the
+  // finder patterns, on top of the 15-bit format info this encoder already
+  // handles) — out of scope for a short watermark URL. Throws if too long
+  // for version 6 (~100 ASCII characters at EC level M).
+  function pickVersion(byteLen, ecLevel) {
+    for (let v = 1; v <= 6; v++) {
+      const info = VERSION_INFO[v][ecLevel];
+      const totalDataCw = info[2] * info[3] + info[4] * info[5];
+      const ccBits = charCountBits(v);
+      const headerBits = 4 + ccBits;
+      const capacityBits = totalDataCw * 8;
+      const neededBits = headerBits + byteLen * 8;
+      // terminator (up to 4 bits) is allowed to be omitted if no room, so
+      // don't require it in the check, matching the spec.
+      if (neededBits <= capacityBits) return v;
+    }
+    throw new Error("QRコード用URLが長すぎます（約100文字以内にしてください）");
+  }
+
+  function buildBitStream(bytes, version, ecLevel) {
+    const info = VERSION_INFO[version][ecLevel];
+    const totalDataCw = info[2] * info[3] + info[4] * info[5];
+    const capacityBits = totalDataCw * 8;
+    const ccBits = charCountBits(version);
+
+    const bits = [];
+    const pushBits = (value, len) => {
+      for (let i = len - 1; i >= 0; i--) bits.push((value >> i) & 1);
+    };
+
+    pushBits(0b0100, 4); // byte mode indicator
+    pushBits(bytes.length, ccBits);
+    for (const b of bytes) pushBits(b, 8);
+
+    // terminator
+    const termLen = Math.min(4, capacityBits - bits.length);
+    if (termLen > 0) pushBits(0, termLen);
+
+    // pad to byte boundary
+    while (bits.length % 8 !== 0) bits.push(0);
+
+    // pad bytes 0xEC/0x11 alternating until capacity filled
+    const padBytes = [0xec, 0x11];
+    let pi = 0;
+    while (bits.length < capacityBits) {
+      pushBits(padBytes[pi % 2], 8);
+      pi++;
+    }
+
+    // to byte array
+    const dataBytes = [];
+    for (let i = 0; i < bits.length; i += 8) {
+      let v = 0;
+      for (let j = 0; j < 8; j++) v = (v << 1) | bits[i + j];
+      dataBytes.push(v);
+    }
+    return dataBytes;
+  }
+
+  function interleave(dataBytes, version, ecLevel) {
+    const info = VERSION_INFO[version][ecLevel];
+    const ecLen = info[1];
+    const g1n = info[2], g1len = info[3], g2n = info[4], g2len = info[5];
+
+    const blocks = [];
+    let offset = 0;
+    for (let i = 0; i < g1n; i++) {
+      blocks.push(dataBytes.slice(offset, offset + g1len));
+      offset += g1len;
+    }
+    for (let i = 0; i < g2n; i++) {
+      blocks.push(dataBytes.slice(offset, offset + g2len));
+      offset += g2len;
+    }
+
+    const ecBlocks = blocks.map((b) => rsEncode(b, ecLen));
+
+    const maxDataLen = Math.max(g1len, g2len || 0);
+    const result = [];
+    for (let i = 0; i < maxDataLen; i++) {
+      for (const b of blocks) if (i < b.length) result.push(b[i]);
+    }
+    for (let i = 0; i < ecLen; i++) {
+      for (const b of ecBlocks) result.push(b[i]);
+    }
+    return result;
+  }
+
+  // ---- Matrix construction ----
+  function makeMatrix(version) {
+    const size = version * 4 + 17;
+    const m = [];
+    for (let i = 0; i < size; i++) m.push(new Array(size).fill(null));
+    return m;
+  }
+
+  function drawFinder(m, r, c) {
+    for (let i = -1; i <= 7; i++) {
+      for (let j = -1; j <= 7; j++) {
+        const rr = r + i, cc = c + j;
+        if (rr < 0 || cc < 0 || rr >= m.length || cc >= m.length) continue;
+        const onBorder = i === -1 || i === 7 || j === -1 || j === 7;
+        const inRing = i >= 0 && i <= 6 && j >= 0 && j <= 6 && (i === 0 || i === 6 || j === 0 || j === 6);
+        const inCore = i >= 2 && i <= 4 && j >= 2 && j <= 4;
+        m[rr][cc] = onBorder ? 0 : (inRing || inCore) ? 1 : 0;
+      }
+    }
+  }
+
+  function drawAlignment(m, r, c) {
+    for (let i = -2; i <= 2; i++) {
+      for (let j = -2; j <= 2; j++) {
+        const onRing = Math.max(Math.abs(i), Math.abs(j)) !== 1;
+        m[r + i][c + j] = onRing ? 1 : 0;
+      }
+    }
+  }
+
+  function drawFunctionPatterns(m, version) {
+    const size = m.length;
+    drawFinder(m, 0, 0);
+    drawFinder(m, 0, size - 7);
+    drawFinder(m, size - 7, 0);
+
+    for (let i = 8; i < size - 8; i++) {
+      m[6][i] = i % 2 === 0 ? 1 : 0;
+      m[i][6] = i % 2 === 0 ? 1 : 0;
+    }
+
+    const coords = ALIGNMENT_COORDS[version];
+    for (const ar of coords) {
+      for (const ac of coords) {
+        if ((ar === 6 && (ac === 6 || ac === size - 7)) || (ar === size - 7 && ac === 6)) continue;
+        drawAlignment(m, ar, ac);
+      }
+    }
+
+    m[size - 8][8] = 1; // dark module
+
+    // Reserve the format-info area with 0 placeholders (the real bits are
+    // written later by drawFormatInfo, once the mask is chosen) — this must
+    // happen before placeData() runs, since it treats every still-null cell
+    // as available for a data bit and would otherwise consume codeword bits
+    // for cells that are actually reserved, corrupting every placement
+    // after this point.
+    for (let i = 0; i < 9; i++) {
+      if (m[8][i] === null) m[8][i] = 0;
+      if (m[i][8] === null) m[i][8] = 0;
+    }
+    for (let i = size - 8; i < size; i++) {
+      if (m[8][i] === null) m[8][i] = 0;
+    }
+    for (let i = size - 7; i < size; i++) {
+      if (m[i][8] === null) m[i][8] = 0;
+    }
+  }
+
+  function placeData(m, version, dataCodewords) {
+    const size = m.length;
+    const bits = [];
+    for (const byte of dataCodewords) {
+      for (let i = 7; i >= 0; i--) bits.push((byte >> i) & 1);
+    }
+    let bitIndex = 0;
+    let dir = -1; // upward
+    let col = size - 1;
+    while (col > 0) {
+      if (col === 6) col--; // skip timing column
+      for (let i = 0; i < size; i++) {
+        const row = dir === -1 ? size - 1 - i : i;
+        for (const c of [col, col - 1]) {
+          if (m[row][c] !== null) continue;
+          const bit = bitIndex < bits.length ? bits[bitIndex] : 0;
+          bitIndex++;
+          m[row][c] = bit;
+        }
+      }
+      dir = -dir;
+      col -= 2;
+    }
+  }
+
+  function applyMask(m, funcMask, maskId) {
+    const size = m.length;
+    const maskFn = [
+      (r, c) => (r + c) % 2 === 0,
+      (r, c) => r % 2 === 0,
+      (r, c) => c % 3 === 0,
+      (r, c) => (r + c) % 3 === 0,
+      (r, c) => (Math.floor(r / 2) + Math.floor(c / 3)) % 2 === 0,
+      (r, c) => ((r * c) % 2) + ((r * c) % 3) === 0,
+      (r, c) => (((r * c) % 2) + ((r * c) % 3)) % 2 === 0,
+      (r, c) => (((r + c) % 2) + ((r * c) % 3)) % 2 === 0,
+    ][maskId];
+    const out = [];
+    for (let r = 0; r < size; r++) {
+      out.push(m[r].slice());
+      for (let c = 0; c < size; c++) {
+        if (funcMask[r][c]) continue;
+        if (maskFn(r, c)) out[r][c] ^= 1;
+      }
+    }
+    return out;
+  }
+
+  function penalty(m) {
+    const size = m.length;
+    let score = 0;
+    // Rule 1: consecutive same-color in row/col
+    for (let r = 0; r < size; r++) {
+      let runColor = m[r][0], runLen = 1;
+      for (let c = 1; c < size; c++) {
+        if (m[r][c] === runColor) {
+          runLen++;
+        } else {
+          if (runLen >= 5) score += 3 + (runLen - 5);
+          runColor = m[r][c];
+          runLen = 1;
+        }
+      }
+      if (runLen >= 5) score += 3 + (runLen - 5);
+    }
+    for (let c = 0; c < size; c++) {
+      let runColor = m[0][c], runLen = 1;
+      for (let r = 1; r < size; r++) {
+        if (m[r][c] === runColor) {
+          runLen++;
+        } else {
+          if (runLen >= 5) score += 3 + (runLen - 5);
+          runColor = m[r][c];
+          runLen = 1;
+        }
+      }
+      if (runLen >= 5) score += 3 + (runLen - 5);
+    }
+    // Rule 2: 2x2 blocks
+    for (let r = 0; r < size - 1; r++) {
+      for (let c = 0; c < size - 1; c++) {
+        const v = m[r][c];
+        if (v === m[r][c + 1] && v === m[r + 1][c] && v === m[r + 1][c + 1]) score += 3;
+      }
+    }
+    // Rule 3: finder-like patterns 1:1:3:1:1 with 4 light either side
+    const patternA = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0];
+    const patternB = [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1];
+    const matchAt = (arr, start, pat) => {
+      for (let k = 0; k < pat.length; k++) if (arr[start + k] !== pat[k]) return false;
+      return true;
+    };
+    for (let r = 0; r < size; r++) {
+      const row = m[r];
+      for (let c = 0; c <= size - 11; c++) {
+        if (matchAt(row, c, patternA) || matchAt(row, c, patternB)) score += 40;
+      }
+    }
+    for (let c = 0; c < size; c++) {
+      const col = m.map((row) => row[c]);
+      for (let r = 0; r <= size - 11; r++) {
+        if (matchAt(col, r, patternA) || matchAt(col, r, patternB)) score += 40;
+      }
+    }
+    // Rule 4: dark module ratio
+    let dark = 0;
+    for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) dark += m[r][c];
+    const percent = (dark * 100) / (size * size);
+    const dev = Math.abs(Math.floor(percent / 5) * 5 - 50) / 5;
+    score += dev * 10;
+    return score;
+  }
+
+  function formatBits(ecLevel, maskId) {
+    const ecBits = { L: 0b01, M: 0b00, Q: 0b11, H: 0b10 }[ecLevel];
+    const data = (ecBits << 3) | maskId;
+    let rem = data;
+    for (let i = 0; i < 10; i++) {
+      rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    }
+    return ((data << 10) | (rem & 0x3ff)) ^ 0x5412;
+  }
+
+  function drawFormatInfo(m, ecLevel, maskId) {
+    const size = m.length;
+    const bitsVal = formatBits(ecLevel, maskId);
+    const bit = (i) => (bitsVal >> i) & 1;
+
+    // Copy 1: around the top-left finder pattern
+    for (let c = 0; c <= 5; c++) m[8][c] = bit(14 - c); // col0..5 -> bit14..9
+    m[8][7] = bit(8);
+    m[8][8] = bit(7);
+    m[7][8] = bit(6);
+    for (let r = 5; r >= 0; r--) m[r][8] = bit(r); // row5..0 -> bit5..0
+
+    // Copy 2: top-right (row 8) and bottom-left (col 8)
+    for (let i = 0; i < 8; i++) m[8][size - 1 - i] = bit(i); // col size-1..size-8 -> bit0..7
+    for (let i = 0; i < 7; i++) m[size - 1 - i][8] = bit(14 - i); // row size-1..size-7 -> bit14..8
+  }
+
+  function buildMatrix(text, ecLevel, forcedMask) {
+    const bytes = utf8Bytes(text);
+    const version = pickVersion(bytes.length, ecLevel);
+    const dataBytes = buildBitStream(bytes, version, ecLevel);
+    const codewords = interleave(dataBytes, version, ecLevel);
+
+    let m = makeMatrix(version);
+    drawFunctionPatterns(m, version);
+    const funcMask = m.map((row) => row.map((v) => v !== null));
+    placeData(m, version, codewords);
+
+    if (forcedMask !== undefined) {
+      const masked = applyMask(m, funcMask, forcedMask);
+      drawFormatInfo(masked, ecLevel, forcedMask);
+      return masked;
+    }
+
+    let best = null, bestScore = Infinity;
+    for (let maskId = 0; maskId < 8; maskId++) {
+      const masked = applyMask(m, funcMask, maskId);
+      drawFormatInfo(masked, ecLevel, maskId);
+      const s = penalty(masked);
+      if (s < bestScore) {
+        bestScore = s;
+        best = masked;
+      }
+    }
+    return best;
+  }
+
+  return { buildMatrix };
+})();
+
+// ---------- QRコード埋め込み設定（プリント右下の小さな透かし） ----------
+
+let qrWatermarkUrl = "";
+let qrWatermarkLoaded = false;
+
+async function refreshQrWatermarkSettings() {
+  if (qrWatermarkLoaded) return; // only prefill once; don't clobber in-progress edits
+  try {
+    const r = await fetch("/api/qrwatermark/settings");
+    const s = await r.json();
+    qrWatermarkLoaded = true;
+    qrWatermarkUrl = s.url || "";
+    $("qrWatermarkUrl").value = qrWatermarkUrl;
+  } catch (e) {
+    // transient network error; leave the field as-is and try again next poll
+  }
+}
+
+$("qrWatermarkSaveBtn").addEventListener("click", async () => {
+  const msg = $("qrWatermarkMsg");
+  const url = $("qrWatermarkUrl").value.trim();
+  const btn = $("qrWatermarkSaveBtn");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/qrwatermark/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "url=" + encodeURIComponent(url),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    qrWatermarkUrl = url;
+    showMsg(msg, "保存しました", "ok");
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+refreshQrWatermarkSettings();
+setInterval(refreshQrWatermarkSettings, 4000);
+
+// Composites a small QR-code watermark into the bottom-right corner of a
+// binary print bitmap (`bin`: Uint8Array, row-major, 1=black — same format
+// ditherFloydSteinberg()/ditherOrdered()/ditherThreshold() all return),
+// mutating it in place. No-op if qrWatermarkUrl is empty. Drawn as flat
+// black/white (no dithering) directly into the already-dithered bitmap —
+// running it back through error diffusion would blur/corrupt the sharp
+// module edges a QR scanner depends on. The whole watermark box (including
+// its quiet-zone margin) is first forced to white, since it may land on
+// top of dark photo content and QR readers require a clean quiet zone to
+// find the finder patterns at all.
+function compositeQrWatermark(bin, w, h) {
+  if (!qrWatermarkUrl) return;
+  let matrix;
+  try {
+    matrix = QR.buildMatrix(qrWatermarkUrl, "M");
+  } catch (e) {
+    console.warn("QRウォーターマークをスキップしました:", e.message);
+    return;
+  }
+
+  const size = matrix.length;
+  const moduleSize = 3; // print dots per QR module — kept small, a corner mark
+  const quietModules = 4; // spec minimum quiet-zone width, in modules
+  const boxPx = (size + quietModules * 2) * moduleSize;
+  const marginPx = 4; // gap from the print's own edges
+  if (boxPx + marginPx > w || boxPx + marginPx > h) return; // print too small to fit it — skip rather than distort
+
+  const startX = w - marginPx - boxPx;
+  const startY = h - marginPx - boxPx;
+
+  for (let y = 0; y < boxPx; y++) {
+    for (let x = 0; x < boxPx; x++) {
+      bin[(startY + y) * w + (startX + x)] = 0;
+    }
+  }
+  for (let my = 0; my < size; my++) {
+    for (let mx = 0; mx < size; mx++) {
+      if (!matrix[my][mx]) continue;
+      const px0 = startX + (quietModules + mx) * moduleSize;
+      const py0 = startY + (quietModules + my) * moduleSize;
+      for (let dy = 0; dy < moduleSize; dy++) {
+        for (let dx = 0; dx < moduleSize; dx++) {
+          bin[(py0 + dy) * w + (px0 + dx)] = 1;
+        }
+      }
+    }
+  }
+}
+
+// ---------- clock / location badges (connection card) ----------
+
+// Local time on whatever phone/PC is viewing this page — not the ATOM
+// Lite's own NTP-synced clock (see src/clock.h), since that only matters
+// for the print-caption timestamp and isn't exposed over the API. A plain
+// client-side clock is simpler and, for "what time is it right now", just
+// as correct as round-tripping to the board.
+function updateClock() {
+  $("clockBadge").textContent = new Date().toLocaleTimeString("ja-JP", { hour12: false });
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// Best-effort place name for wherever this page is being viewed from,
+// via the browser's own Geolocation API (prompts for permission) reverse-
+// geocoded through OpenStreetMap's free Nominatim API — no API key, but
+// keep calls rare (once per page load, not polled) per Nominatim's usage
+// policy. Purely informational (e.g. "自宅 vs 職場のWi-Fi" at a glance);
+// failure/denial just leaves a quiet placeholder instead of an error, since
+// this isn't a feature core to printing.
+//
+// Also fed to the printer's date/time caption when printing an uploaded
+// photo (see printImageBtn's handler) — resolvedLocationText stays "" until
+// a lookup actually succeeds, so callers can tell "not available" apart
+// from "still loading" without re-checking the badge's text.
+let resolvedLocationText = "";
+
+async function initLocationBadge() {
+  const badge = $("locationBadge");
+  if (!("geolocation" in navigator)) {
+    badge.textContent = "位置情報非対応";
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    async (pos) => {
+      try {
+        const { latitude, longitude } = pos.coords;
+        const r = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=ja&zoom=14`
+        );
+        const data = await r.json();
+        const a = data.address || {};
+        const place = a.city || a.town || a.village || a.suburb || a.county || "";
+        const pref = a.state || "";
+        resolvedLocationText = [pref, place].filter(Boolean).join(" ") || data.display_name || "";
+        badge.textContent = resolvedLocationText || "場所不明";
+      } catch (e) {
+        badge.textContent = "位置情報の取得に失敗";
+      }
+    },
+    () => {
+      badge.textContent = "位置情報が利用できません";
+    },
+    { timeout: 10000, maximumAge: 600000 }
+  );
+}
+initLocationBadge();
+
 // ---------- tabs ----------
 
-const TAB_CONTENT_ID = { print: "tabPrint", settings: "tabSettings" };
+const TAB_CONTENT_ID = { camera: "tabCamera", upload: "tabUpload", settings: "tabSettings" };
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -656,6 +1242,8 @@ function renderPreview() {
   else if (mode === "ordered") bin = ditherOrdered(gray, w, h);
   else bin = ditherThreshold(gray, w, h);
 
+  compositeQrWatermark(bin, w, h);
+
   drawBitmapToPreview(bin, w, h);
   packedBits = packBits(bin, w, h);
   packedW = w;
@@ -699,7 +1287,7 @@ $("printImageBtn").addEventListener("click", async () => {
     const beginRes = await fetch("/api/print/image/begin", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `w=${packedW}&h=${packedH}`,
+      body: `w=${packedW}&h=${packedH}&location=${encodeURIComponent(resolvedLocationText)}`,
     });
     if (!beginRes.ok) throw new Error(await beginRes.text());
     await uploadBytes(packedBits);
@@ -1394,13 +1982,14 @@ async function printHaikuFromText(textEl, btn, msgEl) {
     const imageData = ctx.getImageData(0, 0, w, h);
     const gray = toGrayscale(imageData, 0, 0, false);
     const bin = ditherThreshold(gray, w, h); // plain black/white text — no dithering needed
+    compositeQrWatermark(bin, w, h);
     const packed = packBits(bin, w, h);
 
     showMsg(msgEl, "送信中…", "info");
     const beginRes = await fetch("/api/print/image/begin", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `w=${w}&h=${h}`,
+      body: `w=${w}&h=${h}&location=${encodeURIComponent(resolvedLocationText)}`,
     });
     if (!beginRes.ok) throw new Error(await beginRes.text());
     await uploadBytes(packed);

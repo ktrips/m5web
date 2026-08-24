@@ -11,14 +11,23 @@
 // /api/gallery* endpoints (see ../../README.md's API table).
 //
 // BtnA/BtnB step through the gallery (newest-first, same order as the web
-// UI), BtnC prints whichever entry is currently shown. Double-tapping the
-// top power button (M5.BtnPWR) switches to a view of the m5webページ's
-// 「俳句設定」card (poemType/author/autoMode) and back — see
-// handlePowerButton()/renderHaikuSettings(). On that screen, a single
-// (non-double-tap) press of the same power button toggles poemType
-// (俳句⇄ポエム), and BtnA/BtnB step autoMode backward/forward through
-// none -> generate -> print (see cycleHaikuAutoMode()) — both write
-// straight back to /api/haiku/settings, so this is no longer read-only.
+// UI). BtnC does double duty, split by press length: a short click prints
+// whichever entry is currently shown, while holding it (~kBtnCHoldThreshMs)
+// switches to a view of the m5webページ's 「俳句設定」card
+// (poemType/author/autoMode) and back — see handleButtons()/
+// renderHaikuSettings(). On that screen, a short BtnC click instead toggles
+// poemType (俳句⇄ポエム — togglePoemType()), and BtnA/BtnB step autoMode
+// backward/forward through none -> generate -> print (see
+// cycleHaikuAutoMode()) — both write straight back to /api/haiku/settings,
+// so this is no longer read-only.
+//
+// The top power button (M5.BtnPWR) is NOT used for any of this, despite
+// being the more obvious physical fit for a "switch screens" gesture: on
+// real hardware, pressing it trips the M5PM1 PMIC's brownout/reset path
+// before M5Unified ever sees a software button edge (confirmed via
+// serial — "[btn] BtnPWR wasPressed()" never printed, immediately followed
+// by "E BOD: Brownout detector was triggered"), so it's unusable for this
+// purpose on this board.
 //
 // Target hardware: M5PaperColor (ESP32-S3, ~4" E Ink Spectra 6 color
 // panel, 3 physical buttons — BtnA/BtnB/BtnC). This is a DIFFERENT board
@@ -46,10 +55,11 @@
 // NOTE: written against M5Stack's own documented M5PaperColor setup
 // (docs.m5stack.com/en/arduino/papercolor/program and .../button) but not
 // tested on real hardware. Likely spots to double-check/adjust:
-//   - Screen resolution: assumed 600x400 landscape below; various sources
-//     list it as "400x600"/"600x400" without being explicit about
-//     orientation, so double check SCREEN_W/SCREEN_H match what you
-//     actually see, and swap them if the image renders letterboxed wrong.
+//   - Screen resolution: SCREEN_W/SCREEN_H are read from the real
+//     M5.Display.width()/height() in setup() (logged over serial as
+//     "[display] M5.Display reports WxH"), not hardcoded, so this
+//     self-corrects regardless of the panel's actual logical
+//     orientation — no adjustment should be needed here.
 //   - This is a 6-color (Spectra) panel; only WHITE/BLACK are used here
 //     since the source image is already a 1bpp monochrome print bitmap,
 //     so no color-palette handling was needed.
@@ -57,11 +67,14 @@
 //     refresh; this app redraws rarely (on poll changes / button
 //     presses), not continuously, so the extra refresh time isn't a
 //     concern here the way it would be for an animated UI.
-//   - M5.BtnPWR (the top power button, used for the double-tap ->
-//     俳句設定 screen — see handlePowerButton()) is named per M5Stack's
-//     button docs cited above; double-check it against M5Unified's actual
-//     M5PaperColor board profile, since it isn't vendored in this repo and
-//     so couldn't be verified directly here.
+//   - The onboard RGB LEDs (see setLedGreen()/setup()'s solid-green
+//     "powered on" indicator, and beepClick() etc.'s blink-during-beep) are
+//     lit by index across all of M5.Led.getCount() rather than a specific
+//     one, since which physical LED is "top" wasn't verified against real
+//     hardware. setup() logs "[led] M5.Led.getCount() = N" over serial —
+//     if N is 0, M5Unified's board profile didn't auto-wire this board's
+//     LEDs, and it needs driving directly instead (raw NeoPixel on GPIO21,
+//     count 2, per M5Stack's own PaperColor demo firmware).
 //
 // Known limitation: there's currently no in-app way to switch to a
 // *different* already-reachable network — only to recover when the saved
@@ -117,8 +130,15 @@ constexpr size_t kFrameBufMaxLen = 48 * 800;
 M5Canvas canvas(&M5.Display);
 
 // ---- layout (landscape — see the orientation caveat above) ----
-constexpr int SCREEN_W = 600;
-constexpr int SCREEN_H = 400;
+// Set from the real M5.Display.width()/height() in setup() rather than
+// hardcoded, so the canvas always matches this specific panel's actual
+// logical resolution/orientation instead of a guess — a mismatch here (the
+// canvas being sized differently than the real display) is what made the
+// gallery photo render full only in a corner instead of centered
+// full-screen. These defaults are only used if that query somehow returns
+// 0 (never observed, just a safe fallback for createSprite()).
+int SCREEN_W = 600;
+int SCREEN_H = 400;
 // Kept as small as the meta/legend text (textSize 2) stays readable at, so
 // the photo itself — the whole point of this screen — gets as much of the
 // 600x400 panel as possible.
@@ -164,22 +184,18 @@ String statusMsg;
 // ---- app state: screen switching ----
 // Only two screens exist: the gallery (default) and a view of the
 // m5webページ's 「俳句設定」card (poemType/author/autoMode — see
-// src/haiku.h), reached by double-tapping the top power button
-// (M5.BtnPWR) from either screen — see handlePowerButton(). BtnA/BtnB/BtnC
-// only navigate the gallery while Screen::kGallery is active; on
-// Screen::kHaikuSettings they instead step autoMode (see handleButtons()).
+// src/haiku.h), reached by holding BtnC (see kBtnCHoldThreshMs) from either
+// screen — see handleButtons(). BtnA/BtnB navigate the gallery while
+// Screen::kGallery is active; on Screen::kHaikuSettings they instead step
+// autoMode. A short (non-hold) BtnC click keeps its per-screen action
+// either way — print on the gallery, toggle poemType on 俳句設定.
 enum class Screen { kGallery, kHaikuSettings };
 Screen currentScreen = Screen::kGallery;
 
-// Deferred single-vs-double-tap resolution for the top power button —
-// same idea as ATOM Lite's checkButton()/pendingSingleClickMs
-// (src/main.cpp), adapted to M5Unified's per-loop wasPressed() edges
-// instead of a raw digitalRead(): a press is only acted on once
-// kDoubleTapWindowMs has passed with no second press (making it a lone
-// single press — see handlePowerButton()'s second half); a second press
-// arriving inside that window consumes it as a double-tap instead. 0 =
-// no press awaiting resolution.
-unsigned long pendingPwrPressMs = 0;
+// How long BtnC must be held to switch screens, instead of registering as
+// its per-screen short-click action — see handleButtons(). Configured via
+// M5.BtnC.setHoldThresh() in setup().
+constexpr uint16_t kBtnCHoldThreshMs = 800;
 
 // ---- app state: 俳句設定 (mirrors /api/haiku/settings; see below for how
 // this device also writes back to it, unlike every other m5web setting) ----
@@ -344,9 +360,9 @@ bool postHaikuSetting(const String &field, const String &value) {
     return code == 200;
 }
 
-// Top power button, single press, 俳句設定 screen only (see
-// handlePowerButton()) — flips haiku<->poem, same toggle the m5webページ's
-// poemType radio or the ATOM Lite button's own double-click does.
+// BtnC short click, 俳句設定 screen only (see handleButtons()) — flips
+// haiku<->poem, same toggle the m5webページ's poemType radio or the ATOM
+// Lite button's own double-click does.
 void togglePoemType() {
     haikuPoemType = haikuPoemType == "poem" ? "haiku" : "poem";
     postHaikuSetting("poemType", haikuPoemType);
@@ -414,6 +430,18 @@ void drawFrame(const uint8_t *buf, uint16_t srcW, uint16_t srcH, int destX, int 
     }
 }
 
+// ---- LED "powered on" indicator ----
+// Sets every onboard RGB LED to solid green (on=true, the resting
+// "powered on" state — see setup()) or off (on=false, briefly, during a
+// beep — see below). off/green rather than off/on-at-fixed-color so a
+// beep's blink reads as a clean interruption of the steady green rather
+// than a color change.
+void setLedGreen(bool on) {
+    uint8_t g = on ? 255 : 0;
+    for (size_t i = 0; i < M5.Led.getCount(); i++) M5.Led.setColor(i, 0, g, 0);
+    M5.Led.display();
+}
+
 // ---- speaker feedback ----
 // M5PaperColor has a real onboard speaker (ES8311 codec + 1W/8Ω driver),
 // unlike the plain monochrome M5Paper, so M5Unified's Speaker_Class works
@@ -424,31 +452,47 @@ constexpr uint8_t kPrintedVolume = 255;  // louder "done" beep — printing take
 
 // Single short "pi" — played whenever a button press causes any visible
 // reaction (selection change or a print starting), so there's always
-// immediate feedback that the press registered.
+// immediate feedback that the press registered. The LED blinks off for the
+// same span (see setLedGreen()) as a second, visual channel for the same
+// feedback — M5.Speaker.tone() itself doesn't block, so the delay() here is
+// new: it's what makes the "off" period actually last as long as the tone.
 void beepClick() {
+    setLedGreen(false);
     M5.Speaker.setVolume(kClickVolume);
     M5.Speaker.tone(2000, 60);
+    delay(60);
+    setLedGreen(true);
 }
 
 // Two short "pi"s at the same pitch/volume as beepClick() — played instead
 // of it when a nav button (BtnA/BtnB) is pressed twice within
-// kDoubleTapWindowMs, so a fast double-press is audibly distinct from two
-// separate slow single presses.
+// kDoubleTapWindowMs (so a fast double-press is audibly distinct from two
+// separate slow single presses), and also when BtnC is held long enough to
+// switch screens (see handleButtons()). The LED stays off for the whole
+// two-tone span, then back on — a single longer blink rather than trying to
+// blink twice in sync with each tone.
 void beepDoubleClick() {
+    setLedGreen(false);
     M5.Speaker.setVolume(kClickVolume);
     M5.Speaker.tone(2000, 55);
     delay(80);
     M5.Speaker.tone(2000, 55);
+    delay(55);
+    setLedGreen(true);
 }
 
 // Double "pi-pi", louder than beepClick() — played once a print actually
 // finishes, so it's distinguishable from the press-acknowledgement beep
-// even if a user only half-hears it.
+// even if a user only half-hears it. Same one-long-blink treatment as
+// beepDoubleClick().
 void beepPrinted() {
+    setLedGreen(false);
     M5.Speaker.setVolume(kPrintedVolume);
     M5.Speaker.tone(2600, 90);
     delay(140);
     M5.Speaker.tone(2600, 90);
+    delay(90);
+    setLedGreen(true);
 }
 
 // Bottom legend showing what each physical button currently does — plain
@@ -489,41 +533,42 @@ void render() {
 
     GalleryEntry &sel = entries[selectedIndex];
 
-    int imageAreaTop = MARGIN + META_H;
-    int imageAreaH = SCREEN_H - LEGEND_H - imageAreaTop - MARGIN;
+    // Full-screen, centered — no reserved margin or meta strip up front;
+    // drawFrame() already letterboxes and centers within whatever box it's
+    // given, so handing it the entire panel lets the photo fill as much of
+    // it as its aspect ratio allows. Meta/status text is drawn afterwards
+    // as a small overlay in the corner (see below), backed by its own
+    // filled rectangle so it stays legible over a dark part of the photo.
     if (loadedEntryId == sel.id) {
-        drawFrame(frameBuf, PRINT_WIDTH, sel.height, MARGIN, imageAreaTop, SCREEN_W - MARGIN * 2, imageAreaH);
+        drawFrame(frameBuf, PRINT_WIDTH, sel.height, 0, 0, SCREEN_W, SCREEN_H);
     } else {
         canvas.setTextSize(2);
         canvas.setTextColor(BLACK);
-        canvas.drawString("読み込み中...", MARGIN, imageAreaTop + imageAreaH / 2 - 10);
+        canvas.drawString("読み込み中...", MARGIN, SCREEN_H / 2 - 10);
     }
 
-    canvas.setTextSize(2);
-    canvas.setTextColor(BLACK);
     String meta = String(selectedIndex + 1) + "/" + String(entryCount) + "  #" + String(sel.id);
     if (sel.label.length() > 0) meta += "  " + sel.label;
     if (sel.savedAt.length() > 0) meta += "  " + sel.savedAt;
+    // Appended to the same line (rather than a dedicated status row) so a
+    // transient message never needs its own reserved space either.
+    if (statusMsg.length() > 0) meta += "   " + statusMsg;
+    canvas.setTextSize(2);
+    int16_t metaW = canvas.textWidth(meta);
+    canvas.fillRect(0, 0, metaW + MARGIN * 2, META_H + 6, WHITE);
+    canvas.setTextColor(BLACK);
     canvas.drawString(meta, MARGIN, MARGIN);
-
-    if (statusMsg.length() > 0) {
-        canvas.setTextSize(2);
-        canvas.drawString(statusMsg, MARGIN, SCREEN_H - LEGEND_H - META_H);
-    }
-
-    drawLegend("[A] 前へ", "[B] 次へ", "[C] 印刷");
 
     canvas.pushSprite(0, 0);
 }
 
 // Mirror of the m5webページ's 「俳句設定」card, shown in place of the
-// gallery after a double-tap of the top power button (see
-// handlePowerButton()). Two of its three fields are editable right from
-// this screen — a single press of that same power button flips poemType
-// (togglePoemType()), and BtnA/BtnB step autoMode back/forward
-// (cycleHaikuAutoMode()) — both POST straight to /api/haiku/settings.
-// Author isn't editable here (no text entry without a touchscreen), only
-// shown. Another double-tap of the power button goes back to the gallery.
+// gallery after holding BtnC (see handleButtons()/kBtnCHoldThreshMs). Two
+// of its three fields are editable right from this screen — a short BtnC
+// click flips poemType (togglePoemType()), and BtnA/BtnB step autoMode
+// back/forward (cycleHaikuAutoMode()) — both POST straight to
+// /api/haiku/settings. Author isn't editable here (no text entry without a
+// touchscreen), only shown. Holding BtnC again goes back to the gallery.
 void renderHaikuSettings() {
     canvas.fillSprite(WHITE);
     canvas.setTextSize(3);
@@ -544,9 +589,9 @@ void renderHaikuSettings() {
 
     canvas.drawString("著者名: " + (haikuAuthor.length() > 0 ? haikuAuthor : String("（未設定）")), MARGIN, y);
 
-    canvas.drawString("トップボタン: 1回押し=俳句⇄ポエム / ダブルタップ=ギャラリーへ", MARGIN,
+    canvas.drawString("[C]短押し=俳句⇄ポエム / 長押し=ギャラリーへ戻る", MARGIN,
                        SCREEN_H - LEGEND_H - META_H);
-    drawLegend("[A] 自動化 ←", nullptr, "[B] 自動化 →");
+    drawLegend("[A] 自動化 ←", "[C] 俳句⇄ポエム", "[B] 自動化 →");
 
     canvas.pushSprite(0, 0);
 }
@@ -631,20 +676,43 @@ void pollGallery() {
 // presses landing on "次の次"/"前の前" (one press's worth further than a
 // single tap) is confirmed audibly, not just visually.
 //
-// On the 俳句設定 screen, BtnA/BtnB instead step autoMode back/forward
-// (BtnC does nothing there) — see cycleHaikuAutoMode() and
-// handlePowerButton() for that screen's other control, the power button.
+// On the 俳句設定 screen, BtnA/BtnB instead step autoMode back/forward — see
+// cycleHaikuAutoMode(). BtnC's short click flips poemType there instead of
+// printing (togglePoemType()); see the kBtnCHoldThreshMs handling below for
+// the hold gesture that switches between the two screens.
+//
+// BtnC hold (~kBtnCHoldThreshMs), checked first and regardless of
+// currentScreen: switches between the gallery and 俳句設定 screens. This
+// replaces the top power button entirely — see the file header comment for
+// why (M5.BtnPWR presses trip the M5PM1 PMIC's brownout/reset path before
+// M5Unified ever sees the edge, on real hardware).
 void handleButtons() {
+    if (M5.BtnC.wasHold()) {
+        beepDoubleClick();
+        if (currentScreen == Screen::kGallery) {
+            currentScreen = Screen::kHaikuSettings;
+            fetchHaikuSettings();
+            renderHaikuSettings();
+        } else {
+            currentScreen = Screen::kGallery;
+            statusMsg = "";
+            render();
+        }
+        return;
+    }
+
     bool a = M5.BtnA.wasPressed();
     bool b = M5.BtnB.wasPressed();
-    bool c = M5.BtnC.wasPressed();
-    if (!a && !b && !c) return;
+    bool c = M5.BtnC.wasClicked();
 
     if (currentScreen == Screen::kHaikuSettings) {
         if (a) cycleHaikuAutoMode(-1);
         if (b) cycleHaikuAutoMode(1);
+        if (c) togglePoemType();
         return;
     }
+
+    if (!a && !b && !c) return;
 
     if (a || b) {
         char thisButton = a ? 'A' : 'B';
@@ -698,55 +766,6 @@ void handleButtons() {
             statusMsg = "印刷に失敗しました";
         }
         render();
-    }
-}
-
-// M5.BtnPWR is the physical power button on top of the M5PaperColor
-// (distinct from BtnA/BtnB/BtnC, which sit under the screen — see
-// handleButtons()). Unlike BtnA/BtnB's double-tap detection above (which
-// only needs to distinguish "was this the 2nd press of a pair" for an
-// audible beep, not to gate different actions), single vs. double here
-// select two different, mutually exclusive actions — so a lone press
-// can't act immediately; it has to wait out kDoubleTapWindowMs first, in
-// case a second press turns it into a double-tap instead. That's the same
-// deferred-resolution shape as ATOM Lite's checkButton() (src/main.cpp),
-// just driven by M5Unified's per-loop wasPressed() edges instead of a raw
-// digitalRead():
-//   - single press, resolved once the window passes with no 2nd press ->
-//     on Screen::kHaikuSettings, toggles poemType (togglePoemType()); on
-//     Screen::kGallery, does nothing here at all — a single press keeps
-//     the button's stock power-on/off behavior, handled entirely by
-//     M5Unified/the hardware, not this sketch.
-//   - double-tap (2nd press within the window) -> switches between the
-//     gallery and the 俳句設定 screen (renderHaikuSettings()).
-// Runs every loop() regardless of currentScreen, since it's the only way
-// back out of the 俳句設定 screen.
-void handlePowerButton() {
-    if (M5.BtnPWR.wasPressed()) {
-        unsigned long now = millis();
-        if (pendingPwrPressMs != 0 && (now - pendingPwrPressMs) <= kDoubleTapWindowMs) {
-            pendingPwrPressMs = 0;  // consumed — this was the 2nd press
-            beepDoubleClick();
-            if (currentScreen == Screen::kGallery) {
-                currentScreen = Screen::kHaikuSettings;
-                fetchHaikuSettings();
-                renderHaikuSettings();
-            } else {
-                currentScreen = Screen::kGallery;
-                statusMsg = "";
-                render();
-            }
-        } else {
-            pendingPwrPressMs = now;
-        }
-        return;
-    }
-
-    // A lone press only becomes its single-press action once the
-    // double-tap window has passed without a second press.
-    if (pendingPwrPressMs != 0 && (millis() - pendingPwrPressMs) > kDoubleTapWindowMs) {
-        pendingPwrPressMs = 0;
-        if (currentScreen == Screen::kHaikuSettings) togglePoemType();
     }
 }
 
@@ -1044,6 +1063,33 @@ void setup() {
     auto cfg = M5.config();
     M5.begin(cfg);
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.BtnC.setHoldThresh(kBtnCHoldThreshMs);
+
+    // Query the real panel size instead of trusting the SCREEN_W/H
+    // defaults above — see their comment for why (a mismatched canvas is
+    // what made the gallery photo render off-center instead of full-screen).
+    if (M5.Display.width() > 0 && M5.Display.height() > 0) {
+        SCREEN_W = M5.Display.width();
+        SCREEN_H = M5.Display.height();
+    }
+    Serial.printf("[display] M5.Display reports %dx%d\n", M5.Display.width(), M5.Display.height());
+
+    // "Powered on" indicator: solid green on the onboard RGB LED(s) for as
+    // long as the device is running — see setLedGreen()/beepClick() etc.
+    // for how it also blinks off briefly during each beep. M5PaperColor
+    // has 2 built-in RGB LEDs (M5Unified's own board profile sets
+    // led_count=2 and wires them up during M5.begin() above, same
+    // auto-detection path as Display/Speaker/BtnA-C) — logged below since
+    // a count of 0 here would mean that auto-detection didn't take for
+    // this board/library version, and the LED needs driving some other
+    // way (raw NeoPixel on GPIO21, per M5Stack's own PaperColor demo
+    // firmware, would be the fallback). setBrightness() is called
+    // explicitly since a fresh LED_Class instance may default to 0
+    // brightness (i.e. colors set but invisible) — see the top-of-file
+    // hardware caveats for why this whole block is unverified.
+    Serial.printf("[led] M5.Led.getCount() = %u\n", (unsigned)M5.Led.getCount());
+    M5.Led.setBrightness(255);
+    setLedGreen(true);
 
     canvas.createSprite(SCREEN_W, SCREEN_H);
 
@@ -1065,7 +1111,6 @@ unsigned long lastSettingsPollMs = 0;
 void loop() {
     M5.update();
     handleButtons();
-    handlePowerButton();
     printHeartbeat();
 
     unsigned long now = millis();
@@ -1076,8 +1121,8 @@ void loop() {
     // Paused while the 俳句設定 screen is showing so a timer tick can't
     // yank the display back to the gallery via pollGallery()'s render() —
     // it picks back up (and immediately catches up, since lastPollMs kept
-    // advancing past pollIntervalMs while paused) as soon as a power-button
-    // double-tap returns to Screen::kGallery.
+    // advancing past pollIntervalMs while paused) as soon as a BtnC hold
+    // returns to Screen::kGallery.
     if (autoRefreshEnabled && currentScreen == Screen::kGallery && (now - lastPollMs > pollIntervalMs)) {
         lastPollMs = now;
         pollGallery();

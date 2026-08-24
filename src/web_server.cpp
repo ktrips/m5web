@@ -35,8 +35,27 @@ Preferences m5paperPrefs;
 unsigned long m5paperPollMs = kDefaultM5PaperPollMs;
 bool m5paperAutoRefresh = false;
 
+// URL for the optional small QR-code watermark composited into the
+// bottom-right corner of a print — see data/index.html's
+// compositeQrWatermark(). Purely a browser-side concern (this board just
+// persists the string), same pattern as Haiku's fields — empty (the
+// default) means no watermark is drawn.
+Preferences qrWatermarkPrefs;
+String qrWatermarkUrl;
+
 uint16_t pendingWidth = 0;
 uint16_t pendingHeight = 0;
+// Place name from the uploading browser's own Geolocation-derived badge
+// (see data/index.html's initLocationBadge()/printImageBtn handler) — a
+// browser-side concern like the QR watermark URL above, just passed
+// through per-request instead of persisted, since it's only meaningful at
+// the moment of this specific print. Appended after the time in the
+// printed caption band (see Caption::stamp() call below) when non-empty;
+// "" (the default — also the M5StickV/gallery-reprint caption paths,
+// which never have a browser location to attach) omits it entirely, same
+// as every other optional caption piece.
+constexpr size_t kMaxLocationLen = 40;  // printed at a small fixed font size on a 384-dot-wide band
+String pendingLocation;
 bool imageInProgress = false;
 uint16_t uploadGalleryId = 0;
 uint16_t uploadBandHeight = 0;  // extra caption rows appended after this upload's image, 0 if none
@@ -157,6 +176,8 @@ void handleImageBegin() {
     }
     pendingWidth = w;
     pendingHeight = h;
+    pendingLocation = server.hasArg("location") ? server.arg("location") : "";
+    if (pendingLocation.length() > kMaxLocationLen) pendingLocation = pendingLocation.substring(0, kMaxLocationLen);
     Serial.printf("[web] image reserved: %ux%u\n", w, h);
     sendPlain(200, "OK");
 }
@@ -169,6 +190,7 @@ void handleImageUploadComplete() {
     Serial.printf("[web] image printed: %ux%u\n", pendingWidth, pendingHeight);
     pendingWidth = 0;
     pendingHeight = 0;
+    pendingLocation = "";
     sendPlain(200, "printed");
 }
 
@@ -202,7 +224,9 @@ void handleImageUploadChunk() {
         if (imageInProgress) {
             if (uploadBandHeight > 0) {
                 uint8_t band[Printer::kPrintWidthBytes * Caption::kBandHeight];
-                Caption::stamp(band, Printer::kPrintWidthBytes, Clock::nowDateTime().c_str());
+                String captionText = Clock::nowDateTime();
+                if (pendingLocation.length() > 0) captionText += " " + pendingLocation;
+                Caption::stamp(band, Printer::kPrintWidthBytes, captionText.c_str());
                 Printer::feedRasterChunk(band, (size_t)Printer::kPrintWidthBytes * uploadBandHeight);
             }
             Printer::endRaster();
@@ -456,6 +480,16 @@ void handleHaikuSettingsSet() {
     sendPlain(200, "OK");
 }
 
+void handleQrWatermarkSettingsGet() {
+    server.send(200, "application/json", "{\"url\":\"" + jsonEscape(qrWatermarkUrl.c_str()) + "\"}");
+}
+
+void handleQrWatermarkSettingsSet() {
+    qrWatermarkUrl = server.hasArg("url") ? server.arg("url") : "";
+    qrWatermarkPrefs.putString("url", qrWatermarkUrl);
+    sendPlain(200, "OK");
+}
+
 }  // namespace
 
 void begin() {
@@ -464,6 +498,9 @@ void begin() {
     m5paperPrefs.begin("m5web_paper", false);
     m5paperPollMs = m5paperPrefs.getULong("pollMs", kDefaultM5PaperPollMs);
     m5paperAutoRefresh = m5paperPrefs.getBool("autoRefresh", false);
+
+    qrWatermarkPrefs.begin("m5web_qrwm", false);
+    qrWatermarkUrl = qrWatermarkPrefs.getString("url", "");
 
     server.on("/", HTTP_GET, handleRoot);
     server.onNotFound(handleRoot);  // catch-all keeps AP captive-portal probes on the setup page
@@ -494,6 +531,8 @@ void begin() {
     server.on("/api/openai/settings", HTTP_POST, handleOpenAISettingsSet);
     server.on("/api/haiku/settings", HTTP_GET, handleHaikuSettingsGet);
     server.on("/api/haiku/settings", HTTP_POST, handleHaikuSettingsSet);
+    server.on("/api/qrwatermark/settings", HTTP_GET, handleQrWatermarkSettingsGet);
+    server.on("/api/qrwatermark/settings", HTTP_POST, handleQrWatermarkSettingsSet);
 
     server.begin();
 }
