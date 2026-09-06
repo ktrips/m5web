@@ -5,11 +5,13 @@
 // Decodes a JPEG file already sitting in LittleFS (see web_server.cpp's
 // handleExternalPhotoChunk(), which streams an uploaded photo straight to
 // flash rather than buffering it in RAM) and prints it — resized to
-// Printer::kPrintWidthDots wide (aspect-preserving), dithered, with the
-// same kind of date/time + optional caption every other print path
-// stamps — then saves it to the gallery. Never holds more than one
-// ~16-row decode band in RAM at a time (see jpeg_print.cpp's band-buffer
-// design) rather than buffering the whole decoded image.
+// Printer::kPrintWidthDots wide (aspect-preserving), adjusted by the same
+// persisted 「デフォルト: 明るさ・コントラスト」 values (CameraLink::status())
+// M5StickV frames and phone-uploaded photos are, dithered, with the same
+// kind of date/time + optional caption every other print path stamps —
+// then saves it to the gallery. Never holds more than one ~16-row decode
+// band in RAM at a time (see jpeg_print.cpp's band-buffer design) rather
+// than buffering the whole decoded image.
 //
 // Exists for external callers with an arbitrary-size/format photo — not
 // already resized/dithered into Printer::kPrintWidthDots-wide 1bpp the

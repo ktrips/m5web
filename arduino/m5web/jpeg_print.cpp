@@ -6,6 +6,7 @@
 #include <WiFiClient.h>
 #include <string.h>
 
+#include "camera_link.h"
 #include "caption.h"
 #include "clock.h"
 #include "dither.h"
@@ -71,6 +72,30 @@ uint32_t gNextOutputRow = 0;
 uint16_t gGalleryId = 0;
 Dither::RowDitherer gDitherer;
 
+// The same 「デフォルト: 明るさ・コントラスト」values M5StickV frames and
+// (client-side, via data/index.html's toGrayscale()) uploaded photos are
+// adjusted by — snapshotted once per print job (see printFromFile()) from
+// CameraLink::status(), which is where that setting is actually persisted
+// (see camera_link.h). -100..100, 0 meaning "no adjustment".
+int8_t gBrightness = 0;
+int8_t gContrast = 0;
+
+// Same formula as camera_link.cpp's own applyBrightnessContrast() (and
+// data/index.html's toGrayscale()) — kept as its own copy here rather than
+// exported from CameraLink, matching this project's existing
+// per-module-owns-its-own-copy pattern (e.g. kMaxHeightDots above).
+// Applied in place, per output row, before dithering.
+void applyBrightnessContrast(uint8_t *row, uint16_t width) {
+    if (gBrightness == 0 && gContrast == 0) return;
+    float factor = (259.0f * (gContrast + 255)) / (255.0f * (259 - gContrast));
+    for (uint16_t x = 0; x < width; x++) {
+        float g = factor * ((float)row[x] - 128.0f) + 128.0f + gBrightness;
+        if (g < 0) g = 0;
+        if (g > 255) g = 255;
+        row[x] = (uint8_t)g;
+    }
+}
+
 // Fast, direct RGB565 -> grayscale (no full RGB888 unpack via floats —
 // this runs once per decoded pixel, so keep it cheap). Weights approximate
 // standard luminance (0.299/0.587/0.114) applied to each 5/6/5-bit
@@ -105,6 +130,7 @@ void flushAvailableRows() {
             grayRow[ox] = srcRow[sx];
         }
 
+        applyBrightnessContrast(grayRow, Printer::kPrintWidthDots);
         uint8_t packed[Printer::kPrintWidthBytes];
         gDitherer.processRow(grayRow, packed);
         Printer::feedRasterChunk(packed, sizeof(packed));
@@ -151,6 +177,10 @@ bool printFromFile(const String &path, const String &label, const String &locati
         error = "not a valid JPEG";
         return false;
     }
+
+    CameraLink::Status camStatus = CameraLink::status();
+    gBrightness = camStatus.brightness;
+    gContrast = camStatus.contrast;
 
     uint8_t scale = 1;
     while ((origW / scale) > kDecodeWidthCap && scale < 8) scale *= 2;
