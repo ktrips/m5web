@@ -148,6 +148,16 @@ Wi-Fi設定をやり直したい場合は、ATOM本体のボタンを5秒以上�
   OpenAI APIキーを登録する。ATOM Lite本体のNVSに保存され再起動後も保持されるが、
   Wi-Fiパスワードと同様に**一度保存すると値は再表示されない**（設定済みかどうかのバッジ
   表示のみ）。
+- **外部データ転送（オプショナル）**: URLを入力すると、M5StickVで撮った写真・アップロードした
+  写真を、撮影・選択のたびにそのURLへHTTP POST（`Content-Type: application/json`）で自動転送する。
+  送信内容は`{"image": "data:image/png;base64,...", "label": "...", "location": "...",
+  "capturedAt": "2024-01-01T12:00:00.000Z"}`——`image`はプリント用に変換済みの白黒ビットマップを
+  フルサイズのPNGにしたもの、`label`はM5StickVの検出ラベル（アップロードの場合はファイル名）、
+  `location`は位置情報バッジで解決済みの地名（未解決なら空文字）。空欄なら何も転送しない。
+  印刷設定（M5StickV設定の自動印刷／プレビュー確認、俳句設定の印刷の自動化）とは完全に独立して
+  おり、印刷するかどうかに関わらず転送される。URL自体はATOM Lite本体のNVSに保存され再起動後も
+  保持されるが、転送処理自体はこのページを開いているブラウザが行うため、**m5webページを
+  開いたままにしておく必要がある**（閉じている間は転送されない）。
 
 ## M5StickVカメラ連携
 
@@ -592,6 +602,10 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/openai/settings` | `apiKey` (form) でOpenAI APIキーを設定（再起動後も保持、空文字で削除） |
 | GET | `/api/haiku/settings` | 俳句設定のJSON (`poemType`=`haiku`/`poem`, `author`, `autoMode`=`none`/`generate`/`print`) |
 | POST | `/api/haiku/settings` | `poemType`,`author`,`autoMode` (form) で俳句設定を更新（再起動後も保持） |
+| GET | `/api/qrwatermark/settings` | QRコード埋め込み設定のJSON (`url`) |
+| POST | `/api/qrwatermark/settings` | `url` (form) でQRコード埋め込み用URLを設定（再起動後も保持、空文字で無効化） |
+| GET | `/api/forward/settings` | 外部データ転送設定のJSON (`url`) |
+| POST | `/api/forward/settings` | `url` (form) で外部データ転送先URLを設定（再起動後も保持、空文字で無効化） |
 
 ### curl例
 

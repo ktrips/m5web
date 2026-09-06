@@ -43,6 +43,13 @@ bool m5paperAutoRefresh = false;
 Preferences qrWatermarkPrefs;
 String qrWatermarkUrl;
 
+// URL for the optional external photo-forwarding webhook — see
+// data/index.html's forwardPhotoIfConfigured(). Purely a browser-side
+// concern like the QR watermark URL above (this board just persists the
+// string and hands it back); empty (the default) means nothing is sent.
+Preferences forwardPrefs;
+String forwardUrl;
+
 uint16_t pendingWidth = 0;
 uint16_t pendingHeight = 0;
 // Place name from the uploading browser's own Geolocation-derived badge
@@ -490,6 +497,16 @@ void handleQrWatermarkSettingsSet() {
     sendPlain(200, "OK");
 }
 
+void handleForwardSettingsGet() {
+    server.send(200, "application/json", "{\"url\":\"" + jsonEscape(forwardUrl.c_str()) + "\"}");
+}
+
+void handleForwardSettingsSet() {
+    forwardUrl = server.hasArg("url") ? server.arg("url") : "";
+    forwardPrefs.putString("url", forwardUrl);
+    sendPlain(200, "OK");
+}
+
 }  // namespace
 
 void begin() {
@@ -501,6 +518,9 @@ void begin() {
 
     qrWatermarkPrefs.begin("m5web_qrwm", false);
     qrWatermarkUrl = qrWatermarkPrefs.getString("url", "");
+
+    forwardPrefs.begin("m5web_fwd", false);
+    forwardUrl = forwardPrefs.getString("url", "");
 
     server.on("/", HTTP_GET, handleRoot);
     server.onNotFound(handleRoot);  // catch-all keeps AP captive-portal probes on the setup page
@@ -533,6 +553,8 @@ void begin() {
     server.on("/api/haiku/settings", HTTP_POST, handleHaikuSettingsSet);
     server.on("/api/qrwatermark/settings", HTTP_GET, handleQrWatermarkSettingsGet);
     server.on("/api/qrwatermark/settings", HTTP_POST, handleQrWatermarkSettingsSet);
+    server.on("/api/forward/settings", HTTP_GET, handleForwardSettingsGet);
+    server.on("/api/forward/settings", HTTP_POST, handleForwardSettingsSet);
 
     server.begin();
 }

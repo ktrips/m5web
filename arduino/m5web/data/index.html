@@ -357,6 +357,15 @@
       <button class="primary full" id="qrWatermarkSaveBtn" style="margin-top:12px">保存</button>
       <div class="msg" id="qrWatermarkMsg"></div>
     </div>
+
+    <div class="card">
+      <h2>外部データ転送（オプショナル）</h2>
+      <p class="meta">URLを入力すると、M5StickVで撮った写真・アップロードした写真を、撮影・選択のたびにそのURLへHTTP POST（JSON形式）で自動転送します。空欄なら何も転送しません。印刷設定（自動印刷／プレビュー確認、俳句の自動化）とは独立していて、印刷するかどうかに関わらず転送されます。転送はこのページを開いているブラウザが行うため、<b>m5webページを開いたままにしておく必要があります</b>。</p>
+      <label>転送先URL</label>
+      <input type="text" id="forwardUrl" placeholder="https://example.com/webhook">
+      <button class="primary full" id="forwardSaveBtn" style="margin-top:12px">保存</button>
+      <div class="msg" id="forwardMsg"></div>
+    </div>
   </div>
 
   <footer>m5web · M5Stack ATOM Printer</footer>
@@ -838,6 +847,76 @@ $("qrWatermarkSaveBtn").addEventListener("click", async () => {
 refreshQrWatermarkSettings();
 setInterval(refreshQrWatermarkSettings, 4000);
 
+// ---------- 外部データ転送設定（撮影・アップロード写真をAPIへ自動POST） ----------
+
+let forwardUrl = "";
+let forwardLoaded = false;
+
+async function refreshForwardSettings() {
+  if (forwardLoaded) return; // only prefill once; don't clobber in-progress edits
+  try {
+    const r = await fetch("/api/forward/settings");
+    const s = await r.json();
+    forwardLoaded = true;
+    forwardUrl = s.url || "";
+    $("forwardUrl").value = forwardUrl;
+  } catch (e) {
+    // transient network error; leave the field as-is and try again next poll
+  }
+}
+
+$("forwardSaveBtn").addEventListener("click", async () => {
+  const msg = $("forwardMsg");
+  const url = $("forwardUrl").value.trim();
+  const btn = $("forwardSaveBtn");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/forward/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "url=" + encodeURIComponent(url),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    forwardUrl = url;
+    showMsg(msg, "保存しました", "ok");
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+refreshForwardSettings();
+setInterval(refreshForwardSettings, 4000);
+
+// Fire-and-forget POST of a just-captured (M5StickV) or just-selected
+// (upload) photo to the 「外部データ転送」card's configured URL — called
+// from refreshCameraStatus() on a new frame and from the file-upload
+// handler, independent of camMode/haiku autoMode/whether anything ever
+// gets printed. No-op if forwardUrl is empty. Sends the full-resolution
+// image (unlike canvasToPngDataUrl()'s OpenAI-sized downscale, since this
+// isn't feeding a vision model with a size cap) as a data: URL inside a
+// small JSON envelope, plus whatever caption info is available at this
+// point (M5StickV's detection label, or the upload's filename; the
+// browser's resolved location badge either way). A failed/unreachable
+// webhook is swallowed — this is best-effort and must never block the
+// print flow this page exists for.
+function forwardPhotoIfConfigured(canvas, label) {
+  if (!forwardUrl) return;
+  fetch(forwardUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image: canvas.toDataURL("image/png"),
+      label: label || "",
+      location: resolvedLocationText || "",
+      capturedAt: new Date().toISOString(),
+    }),
+  }).catch((e) => {
+    console.warn("[forward] failed to send photo:", e);
+  });
+}
+
 // Composites a small QR-code watermark into the bottom-right corner of a
 // binary print bitmap (`bin`: Uint8Array, row-major, 1=black — same format
 // ditherFloydSteinberg()/ditherOrdered()/ditherThreshold() all return),
@@ -1094,6 +1173,7 @@ $("fileInput").addEventListener("change", (e) => {
     $("imageControls").classList.remove("hidden");
     renderPreview();
     autoHaikuFor($("previewCanvas"), $("uploadHaikuBtn"), $("uploadHaikuText"), $("uploadHaikuPrintBtn"), $("uploadHaikuMsg"));
+    forwardPhotoIfConfigured($("previewCanvas"), file.name);
   };
   img.src = URL.createObjectURL(file);
 });
@@ -1429,6 +1509,7 @@ async function refreshCameraStatus() {
       camLastSeq = s.frameSeq;
       await loadCameraFrame(s.width, s.height);
       autoHaikuFor($("camPreviewCanvas"), $("camHaikuBtn"), $("camHaikuText"), $("camHaikuPrintBtn"), $("camHaikuMsg"));
+      forwardPhotoIfConfigured($("camPreviewCanvas"), s.label || "");
     }
   } catch (e) {
     // transient network error while polling; try again next interval
