@@ -541,30 +541,39 @@ iPhoneのブラウザを介さず、外部のプログラム・スクリプト�
 エンドポイントは代わりに**通常のJPEG画像ファイルをそのまま**受け取り、ATOM Lite本体側で
 デコード・384dot幅へのリサイズ・ディザリングまで行ってから印刷し、ギャラリーにも保存する。
 
-呼び出し方は2通りある。
+呼び出し方は2通りあり、**それぞれ別のエンドポイント**になっている（理由は後述）。
 
-**(1) ファイルを直接アップロード**（multipart/form-data）:
+**(1) ファイルを直接アップロード**（`/api/print/photo`、multipart/form-data）:
 
 ```bash
 curl -F "photo=@snapshot.jpg" \
   "http://m5web.local/api/print/photo?label=玄関&location=自宅"
 ```
 
-**(2) URLを指定して、ATOM Lite本体に取得させる**（`url`をqueryパラメータで指定。
-ファイルのアップロード自体が不要になる）:
+**(2) URLを指定して、ATOM Lite本体に取得させる**（`/api/print/photo/url`、
+`url`をqueryパラメータで指定。ファイルのアップロード自体が不要になる）:
 
 ```bash
-curl -X POST "http://m5web.local/api/print/photo?url=http://example.com/snapshot.jpg&label=玄関&location=自宅"
+curl -X POST "http://m5web.local/api/print/photo/url?url=http://example.com/snapshot.jpg&label=玄関&location=自宅"
 ```
 
-`url`を指定した場合、`photo`フィールドのアップロードは不要（両方指定した場合は`url`が
-優先される）。ATOM Lite本体がそのURLへHTTP GETリクエストを送り、レスポンスをそのまま
-一時ファイルに保存してから(1)と同じデコード処理にかける。**`url`は`http://`で始まる必要が
-あり、`https://`は明示的に拒否される**（`400`エラー）——このボードはHTTPS通信（TLS）を
-安定して扱えないという既知の制約があり（後述「実機での動作確認ができていない機能」参照）、
-無理に対応させず安全側に倒している。写真を`https://`でしか配信できない場所（多くのクラウド
+ATOM Lite本体がそのURLへHTTP GETリクエストを送り、レスポンスをそのまま一時ファイルに
+保存してから(1)と同じデコード処理にかける。**`url`は`http://`で始まる必要があり、
+`https://`は明示的に拒否される**（`400`エラー）——このボードはHTTPS通信（TLS）を安定して
+扱えないという既知の制約があり（後述「実機での動作確認ができていない機能」参照）、無理に
+対応させず安全側に倒している。写真を`https://`でしか配信できない場所（多くのクラウド
 ストレージなど）に置いている場合は、同一LAN内に立てた簡易HTTPサーバー経由で配信するなど、
 `http://`でアクセスできる形にしてから指定すること。
+
+**`/api/print/photo`と`/api/print/photo/url`が別エンドポイントに分かれている理由**：
+`/api/print/photo`はマルチパートアップロード（ファイル本体を受け取る処理）用のハンドラが
+登録されたルートで、ESP32のWebServerライブラリはこの手のルートに対して、ボディの無い
+リクエスト（`Content-Type`もファイルも無いPOST）を受け取るとハング・接続リセットを起こす
+ことが実機で確認されている。`url`パラメータだけを渡す方式もボディを送らないため、同じ
+ルートに間借りさせるとこの問題を引き起こしてしまう——そのため`/api/print/photo/url`という
+別ルート（アップロードハンドラを登録していない、通常のハンドラのみのルート）に分離して
+ある。**単純な疎通確認のつもりで`/api/print/photo`へボディ無しのPOSTを送るのも同じ理由で
+危険**なので行わないこと。疎通確認には`/api/status`（GET、副作用なし）を使うこと。
 
 - **`label`・`location`（どちらもqueryパラメータ、任意）**: 印刷時に日付・時刻とあわせて
   キャプション帯に焼き込まれる（`label`はM5StickVの検出ラベルに相当する短いタグ、
@@ -644,7 +653,8 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/print/test` | 配線確認用の固定テストページを印刷（UI上のボタンは無いが引き続き利用可） |
 | POST | `/api/print/image/begin` | `w`,`h` (form) で次の画像サイズを予約 (wは384固定, h<=`maxHeightDots`) |
 | POST | `/api/print/image` | multipart/form-dataで1bpp生ビットマップ本体をアップロード→即印刷 |
-| POST | `/api/print/photo` | multipart/form-dataでJPEG画像本体をアップロード、または`url`（query param、`http://`のみ）でATOM Lite本体に取得させる。`label`,`location`はquery paramでオプション指定→ATOM Lite本体でデコード・384dot幅にリサイズ・ディザリングして印刷、ギャラリーにも保存（詳細は後述） |
+| POST | `/api/print/photo` | multipart/form-dataでJPEG画像本体をアップロード（`label`,`location`はquery paramでオプション指定）→ATOM Lite本体でデコード・384dot幅にリサイズ・ディザリングして印刷、ギャラリーにも保存（詳細は後述。ボディ無しでの疎通確認は不可、後述の注意点参照） |
+| POST | `/api/print/photo/url` | `url`（query param、`http://`のみ）で指定した写真をATOM Lite本体が取得して印刷。`label`,`location`も同様にquery paramでオプション指定（詳細は後述） |
 | GET | `/api/camera/status` | M5StickVカメラの状態JSON (`mode`,`frameReady`,`pendingPrint`,`width`,`height`,`frameSeq`,`brightness`,`contrast`,`rotationDeg`,`label`) |
 | POST | `/api/camera/mode` | `mode`=`auto`／`preview` (form) で確認モードを切り替え（再起動後も保持） |
 | POST | `/api/camera/settings` | `brightness`,`contrast` (form, -100〜100) で次フレームからの既定調整値を設定（再起動後も保持） |

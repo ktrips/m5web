@@ -68,14 +68,20 @@ bool imageInProgress = false;
 uint16_t uploadGalleryId = 0;
 uint16_t uploadBandHeight = 0;  // extra caption rows appended after this upload's image, 0 if none
 
-// /api/print/photo — lets an external caller (not this project's own
-// browser page) send an arbitrary JPEG and have it printed the same way
-// an uploaded photo is, without needing to replicate the browser's own
-// resize/dither step first. Streamed straight to a LittleFS temp file
-// (never buffered whole in RAM — a phone-camera JPEG can be several MB)
-// and capped well below that, then handed to JpegPrint::printFromFile()
-// once the upload completes. See jpeg_print.h for why this whole feature
-// is flagged untested-on-real-hardware.
+// /api/print/photo (+ /api/print/photo/url) — lets an external caller
+// (not this project's own browser page) send an arbitrary JPEG and have
+// it printed the same way an uploaded photo is, without needing to
+// replicate the browser's own resize/dither step first. Streamed
+// straight to a LittleFS temp file (never buffered whole in RAM — a
+// phone-camera JPEG can be several MB) and capped well below that, then
+// handed to JpegPrint::printFromFile() once the upload completes. See
+// jpeg_print.h for why this whole feature is flagged
+// untested-on-real-hardware — confirmed on real hardware so far: a
+// bodyless POST straight to /api/print/photo (this route, registered
+// with an upload handler) resets the connection instead of responding,
+// which is why the URL-fetch variant (also bodyless — just query params,
+// no file) lives on the separate /api/print/photo/url route instead, see
+// handleExternalPhotoByUrl() below.
 constexpr const char *kExternalPhotoTmpPath = "/tmp_ext_photo.jpg";
 constexpr size_t kMaxExternalPhotoBytes = 400 * 1024;  // callers must pre-resize/compress past this
 bool externalPhotoOk = false;
@@ -291,28 +297,40 @@ void handleExternalPhotoChunk() {
     }
 }
 
+// Deliberately a *separate* route from /api/print/photo (see below), not
+// a branch inside handleExternalPhotoComplete() keyed on `url` — the
+// ESP32 WebServer library treats any route registered with an upload
+// handler (server.on(uri, method, fn, uploadFn), used for the multipart
+// path below) as expecting a multipart/form-data body, and a request
+// with no such body (exactly what this `url`-only call is — no file, no
+// Content-Type) can hang/reset the connection instead of reaching `fn`
+// at all. Confirmed against real hardware: a bodyless POST straight to
+// /api/print/photo (e.g. testing connectivity with `curl -X POST
+// .../api/print/photo` and no data) reset the connection instead of
+// returning a response. Registered as a plain server.on(uri, method, fn)
+// (no upload handler at all) so it can never hit that code path.
+void handleExternalPhotoByUrl() {
+    String label = server.hasArg("label") ? server.arg("label") : "";
+    String location = server.hasArg("location") ? server.arg("location") : "";
+    if (!server.hasArg("url")) {
+        sendPlain(400, "url required");
+        return;
+    }
+    String error;
+    bool ok = JpegPrint::fetchAndPrint(server.arg("url"), label, location, error);
+    if (!ok) {
+        Serial.printf("[web] external photo (url): %s\n", error.c_str());
+        sendPlain(400, error);
+        return;
+    }
+    Serial.println("[web] external photo (url) printed");
+    sendPlain(200, "printed");
+}
+
 void handleExternalPhotoComplete() {
     String label = server.hasArg("label") ? server.arg("label") : "";
     String location = server.hasArg("location") ? server.arg("location") : "";
     String error;
-
-    // `url` (query param) takes priority over any uploaded body: this
-    // request never went through handleExternalPhotoChunk() at all in
-    // that case (no multipart upload for the WebServer library to
-    // dispatch to it), so externalPhotoOk below would just be leftover
-    // state from whatever request happened to run before this one —
-    // checking `url` first avoids depending on it entirely for this path.
-    if (server.hasArg("url")) {
-        bool ok = JpegPrint::fetchAndPrint(server.arg("url"), label, location, error);
-        if (!ok) {
-            Serial.printf("[web] external photo (url): %s\n", error.c_str());
-            sendPlain(400, error);
-            return;
-        }
-        Serial.println("[web] external photo (url) printed");
-        sendPlain(200, "printed");
-        return;
-    }
 
     if (!externalPhotoOk) {
         sendPlain(413, "upload failed or exceeded " + String(kMaxExternalPhotoBytes / 1024) +
@@ -618,6 +636,7 @@ void begin() {
     server.on("/api/print/image/begin", HTTP_POST, handleImageBegin);
     server.on("/api/print/image", HTTP_POST, handleImageUploadComplete, handleImageUploadChunk);
     server.on("/api/print/photo", HTTP_POST, handleExternalPhotoComplete, handleExternalPhotoChunk);
+    server.on("/api/print/photo/url", HTTP_POST, handleExternalPhotoByUrl);
     server.on("/api/camera/status", HTTP_GET, handleCameraStatus);
     server.on("/api/camera/mode", HTTP_POST, handleCameraModeSet);
     server.on("/api/camera/settings", HTTP_POST, handleCameraSettings);
