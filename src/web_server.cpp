@@ -9,6 +9,7 @@
 #include "clock.h"
 #include "gallery.h"
 #include "haiku.h"
+#include "jpeg_print.h"
 #include "led.h"
 #include "openai.h"
 #include "printer.h"
@@ -66,6 +67,20 @@ String pendingLocation;
 bool imageInProgress = false;
 uint16_t uploadGalleryId = 0;
 uint16_t uploadBandHeight = 0;  // extra caption rows appended after this upload's image, 0 if none
+
+// /api/print/photo — lets an external caller (not this project's own
+// browser page) send an arbitrary JPEG and have it printed the same way
+// an uploaded photo is, without needing to replicate the browser's own
+// resize/dither step first. Streamed straight to a LittleFS temp file
+// (never buffered whole in RAM — a phone-camera JPEG can be several MB)
+// and capped well below that, then handed to JpegPrint::printFromFile()
+// once the upload completes. See jpeg_print.h for why this whole feature
+// is flagged untested-on-real-hardware.
+constexpr const char *kExternalPhotoTmpPath = "/tmp_ext_photo.jpg";
+constexpr size_t kMaxExternalPhotoBytes = 400 * 1024;  // callers must pre-resize/compress past this
+bool externalPhotoOk = false;
+size_t externalPhotoBytesWritten = 0;
+File externalPhotoFile;
 
 void sendPlain(int code, const String &body) {
     server.send(code, "text/plain", body);
@@ -244,6 +259,56 @@ void handleImageUploadChunk() {
             imageInProgress = false;
         }
     }
+}
+
+// See kExternalPhotoTmpPath's doc comment above. label/location come from
+// query-string args (available immediately, unlike multipart form fields,
+// which the ESP32 WebServer library only finishes parsing once the whole
+// request — including the file body — has been read), matching how
+// handleImageBegin() takes `location` the same way for the phone-upload
+// path.
+void handleExternalPhotoChunk() {
+    HTTPUpload &upload = server.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+        externalPhotoBytesWritten = 0;
+        externalPhotoFile = LittleFS.open(kExternalPhotoTmpPath, "w");
+        externalPhotoOk = (bool)externalPhotoFile;
+        if (!externalPhotoOk) Serial.println("[web] external photo: failed to open temp file");
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (externalPhotoOk) {
+            externalPhotoBytesWritten += upload.currentSize;
+            if (externalPhotoBytesWritten > kMaxExternalPhotoBytes) {
+                Serial.println("[web] external photo: exceeded size cap, aborting");
+                externalPhotoOk = false;
+                externalPhotoFile.close();
+                LittleFS.remove(kExternalPhotoTmpPath);
+            } else {
+                externalPhotoFile.write(upload.buf, upload.currentSize);
+            }
+        }
+    } else if (upload.status == UPLOAD_FILE_END) {
+        if (externalPhotoFile) externalPhotoFile.close();
+    }
+}
+
+void handleExternalPhotoComplete() {
+    if (!externalPhotoOk) {
+        sendPlain(413, "upload failed or exceeded " + String(kMaxExternalPhotoBytes / 1024) +
+                           "KB — please resize/compress the photo before sending");
+        return;
+    }
+    String label = server.hasArg("label") ? server.arg("label") : "";
+    String location = server.hasArg("location") ? server.arg("location") : "";
+    String error;
+    bool ok = JpegPrint::printFromFile(kExternalPhotoTmpPath, label, location, error);
+    LittleFS.remove(kExternalPhotoTmpPath);
+    if (!ok) {
+        Serial.printf("[web] external photo: %s\n", error.c_str());
+        sendPlain(400, error);
+        return;
+    }
+    Serial.println("[web] external photo printed");
+    sendPlain(200, "printed");
 }
 
 void handleCameraStatus() {
@@ -533,6 +598,7 @@ void begin() {
     server.on("/api/print/test", HTTP_POST, handlePrintTest);
     server.on("/api/print/image/begin", HTTP_POST, handleImageBegin);
     server.on("/api/print/image", HTTP_POST, handleImageUploadComplete, handleImageUploadChunk);
+    server.on("/api/print/photo", HTTP_POST, handleExternalPhotoComplete, handleExternalPhotoChunk);
     server.on("/api/camera/status", HTTP_GET, handleCameraStatus);
     server.on("/api/camera/mode", HTTP_POST, handleCameraModeSet);
     server.on("/api/camera/settings", HTTP_POST, handleCameraSettings);

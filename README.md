@@ -29,7 +29,9 @@ PlatformIO / Arduino IDE のどちらでも書き込める。中身は同じフ�
 
 ### PlatformIO（推奨）
 
-VSCode + PlatformIO拡張、または `pio` CLI を使う。
+VSCode + PlatformIO拡張、または `pio` CLI を使う。ライブラリ（`platformio.ini`の
+`lib_deps`にある`TJpg_Decoder`——`/api/print/photo`のJPEGデコード用、本プロジェクト唯一の
+外部依存）は初回ビルド時に自動でダウンロードされる。
 
 ```bash
 pio run -t upload      # ファームウェア書き込み
@@ -55,8 +57,10 @@ Arduino IDEはスケッチフォルダ直下にファイルを置く必要があ
    を追加し、"esp32 by Espressif Systems" をインストール。
 2. ボードに **M5Atom** を選択。
 3. `ツール > Partition Scheme` はSPIFFS/LittleFS領域のあるもの（例: "Default 4MB with spiffs"）を選択。
-4. `arduino/m5web/m5web.ino` を開いて スケッチ > マイコンボードに書き込む。
-5. `data/index.html` はLittleFSへの書き込みが別途必要。Arduino IDE 2.xの場合は
+4. ライブラリマネージャで **TJpg_Decoder**（Bodmer）をインストール
+   （`/api/print/photo`のJPEGデコード用、本プロジェクト唯一の外部依存）。
+5. `arduino/m5web/m5web.ino` を開いて スケッチ > マイコンボードに書き込む。
+6. `data/index.html` はLittleFSへの書き込みが別途必要。Arduino IDE 2.xの場合は
    [arduino-littlefs-upload](https://github.com/earlephilhower/arduino-littlefs-upload) プラグインを
    インストールし、コマンドパレットから "Upload LittleFS to Pico/ESP8266/ESP32" を実行する
    （IDE 1.8系なら同等の "ESP32 Sketch Data Upload" ツールを使う）。
@@ -528,6 +532,39 @@ ATOM Lite本体のボタンをダブルクリックしても切り替えられ�
   [platform.openai.com](https://platform.openai.com/api-keys)で発行し、設定タブの
   「OpenAI設定」カードに登録する。
 
+## 外部プログラムからの写真送信（`/api/print/photo`）
+
+iPhoneのブラウザを介さず、外部のプログラム・スクリプト・他のIoT機器などから直接「写真」
+（JPEG）を送って印刷・ギャラリー保存させたい場合のAPI。既存の`/api/print/image`は
+384dot幅・1bpp（白黒2値）に変換済みの生ビットマップしか受け付けないため、外部から使うには
+呼び出し側でブラウザと同じ誤差拡散ディザリングを自前で実装する必要があった。この
+エンドポイントは代わりに**通常のJPEG画像ファイルをそのまま**受け取り、ATOM Lite本体側で
+デコード・384dot幅へのリサイズ・ディザリングまで行ってから印刷し、ギャラリーにも保存する。
+
+```bash
+curl -F "photo=@snapshot.jpg" \
+  "http://m5web.local/api/print/photo?label=玄関&location=自宅"
+```
+
+- **`label`・`location`（どちらもqueryパラメータ、任意）**: 印刷時に日付・時刻とあわせて
+  キャプション帯に焼き込まれる（`label`はM5StickVの検出ラベルに相当する短いタグ、
+  `location`は任意の地名など）。両方省略した場合は日付・時刻のみ（クロックが未同期なら
+  それも省略）。
+- **画像サイズの上限は400KB**。それを超えるアップロードは`413`で拒否されるので、
+  送信前に呼び出し側でリサイズ・圧縮しておくこと（目安: 長辺2000px程度、JPEG品質80%前後
+  まで落とせば大抵400KB以内に収まる）。
+- **アスペクト比が極端に縦長の画像は`400`で拒否される**（384dot幅で換算した高さが
+  約250mm相当の上限を超える場合）。
+- 対応形式は**JPEGのみ**（PNG等は非対応）。
+
+**⚠️ 実機での動作確認ができていない機能**。このボード（ESP32-PICO-D4、PSRAM無し）は
+過去にOpenAI連携のHTTPS通信ですらメモリ不足で失敗し、ブラウザ側に処理を移した実績があり
+（本書「俳句生成」節参照）、ATOM Lite本体でJPEGデコードを行うこの機能も同様のメモリ制約に
+触れるリスクを承知のうえで実装している。デコード処理自体は画像全体を一度にメモリへ
+展開せず、数十行分のバンド単位でストリーミング処理する設計にしてあるが（詳細は
+`src/jpeg_print.cpp`のコメント参照）、実機で`out of memory`のようなエラーが出る場合は
+同ファイルの`kDecodeWidthCap`を下げるか、送信する画像自体をより小さくリサイズすること。
+
 ## 制限事項
 
 - 印刷幅は58mmヘッド固定の384dot。
@@ -557,6 +594,8 @@ src/
                          [俳句生成](#俳句生成openai連携)）
   haiku.*               俳句/ポエムの形式・著者名の保存・受け渡しのみ（生成・印字描画はブラウザ側、
                          詳細は[俳句生成](#俳句生成openai連携)）
+  jpeg_print.*           /api/print/photo用: JPEGデコード(TJpg_Decoder)→リサイズ→ditherへ橋渡し
+                         →印刷+ギャラリー保存。本プロジェクト唯一の外部ライブラリ依存
 data/
   index.html          m5web本体（UI + Canvas画像変換, 外部CDN依存なし・単一ファイル）
 arduino/m5web/
@@ -584,6 +623,7 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/print/test` | 配線確認用の固定テストページを印刷（UI上のボタンは無いが引き続き利用可） |
 | POST | `/api/print/image/begin` | `w`,`h` (form) で次の画像サイズを予約 (wは384固定, h<=`maxHeightDots`) |
 | POST | `/api/print/image` | multipart/form-dataで1bpp生ビットマップ本体をアップロード→即印刷 |
+| POST | `/api/print/photo` | multipart/form-dataでJPEG画像本体をアップロード（`label`,`location`はquery paramでオプション指定）→ATOM Lite本体でデコード・384dot幅にリサイズ・ディザリングして印刷、ギャラリーにも保存（詳細は後述） |
 | GET | `/api/camera/status` | M5StickVカメラの状態JSON (`mode`,`frameReady`,`pendingPrint`,`width`,`height`,`frameSeq`,`brightness`,`contrast`,`rotationDeg`,`label`) |
 | POST | `/api/camera/mode` | `mode`=`auto`／`preview` (form) で確認モードを切り替え（再起動後も保持） |
 | POST | `/api/camera/settings` | `brightness`,`contrast` (form, -100〜100) で次フレームからの既定調整値を設定（再起動後も保持） |

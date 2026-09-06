@@ -423,7 +423,7 @@ PlatformIOは、Visual Studio Code（VSCode）の拡張機能として使える�
 3. インストール後、VSCodeを再起動する
 4. 本プロジェクトのフォルダ（`platformio.ini`が置かれているルートフォルダ）をVSCodeで開く
 
-PlatformIOは`platformio.ini`の内容を読み取り、必要なツールチェーン（ESP32用のコンパイラなど）を自動的にダウンロードします。初回はやや時間がかかりますが、以降のビルドは高速です。
+PlatformIOは`platformio.ini`の内容を読み取り、必要なツールチェーン（ESP32用のコンパイラなど）や、`lib_deps`に列挙されたライブラリ（本書執筆時点では**TJpg_Decoder**——`/api/print/photo`のJPEGデコード用、本プロジェクト唯一の外部ライブラリ依存です。8.5節で扱います）を自動的にダウンロードします。初回はやや時間がかかりますが、以降のビルドは高速です。
 
 CLIに慣れている場合は、`pio`コマンドをターミナルから直接使うこともできます。
 
@@ -512,6 +512,8 @@ M5Stackシリーズを制御するには、機種ごとに用意された公式�
 本プロジェクトのArduino IDE用ファイルは、PlatformIO用（`src/`フォルダ）とは別に、`arduino/m5web/`フォルダにフラットな構成のコピーとして用意されています。これは、Arduino IDEがスケッチフォルダの直下にすべてのソースファイルを置くことを要求する一方、PlatformIOは`src/`という専用フォルダを使う、という両ツールの流儀の違いによるものです。中身は同一のファームウェアですが、**片方を修正したら、もう片方にも同じ修正を反映する必要がある**（自動同期はされない）という点は覚えておいてください。
 
 ATOM Lite用のWeb UI（`data/index.html`）をLittleFSへ書き込むには、Arduino IDE単体では機能が不足しています。IDE 2.x系では[arduino-littlefs-upload](https://github.com/earlephilhower/arduino-littlefs-upload)というプラグインを追加インストールし、コマンドパレットから「Upload LittleFS to Pico/ESP8266/ESP32」を実行します（IDE 1.8系の場合は同等の「ESP32 Sketch Data Upload」ツールを使用）。
+
+ATOM Lite本体側も、ライブラリマネージャから**TJpg_Decoder**（Bodmer）を追加でインストールしてください——本プロジェクト唯一の外部ライブラリ依存で、`/api/print/photo`エンドポイント（8.5節）のJPEGデコードにのみ使われます。
 
 M5PaperColorの場合は、ライブラリマネージャから**M5Unified**・**M5GFX**（いずれもM5Stack）と**ArduinoJson**（Benoit Blanchon）の3つを追加でインストールしてください。
 
@@ -990,6 +992,7 @@ Web UIが内部で使っているものと同じHTTP APIは、外部プログラ
 | POST | `/api/print/test` | 配線確認用の固定テストページを印刷 |
 | POST | `/api/print/image/begin` | `w`, `h`（form）で次の画像サイズを予約（wは384固定、h<=`maxHeightDots`） |
 | POST | `/api/print/image` | multipart/form-dataで1bpp生ビットマップ本体をアップロード→即印刷 |
+| POST | `/api/print/photo` | multipart/form-dataでJPEG画像本体をアップロード（`label`,`location`はqueryパラメータで任意指定）→ATOM Lite本体でデコード・リサイズ・ディザリングして印刷、ギャラリーにも保存（8.5節） |
 | GET | `/api/camera/status` | M5StickVカメラの状態JSON（`mode`, `frameReady`, `pendingPrint`, `width`, `height`, `frameSeq`, `brightness`, `contrast`, `rotationDeg`, `label`） |
 | POST | `/api/camera/mode` | `mode`=`auto`／`preview`（form）で確認モードを切り替え |
 | POST | `/api/camera/settings` | `brightness`, `contrast`（form, -100〜100）で次フレームからの既定調整値を設定 |
@@ -1111,6 +1114,26 @@ requests.post(f"{HOST}/api/print/image",
 **俳句設定カードの「印刷の自動化」**（6.7節）を使うと、ここまで説明した「俳句を作る」「俳句プリント」の2ステップを、M5StickVで撮影するたび・写真をアップロードするたびに自動で実行できます。デフォルトの「俳句を作らない」ではボタンを押すまで何も起きません。「自動で俳句作成」を選ぶと生成だけが自動化され、結果は編集可能なボックスに表示されるものの印刷は手動のままです。「自動でプリントまで実行」を選ぶと生成・印刷の両方が自動化されます。生成される形式（俳句／ポエム）と著者名は、同じ俳句設定カードの選択がそのまま使われます。
 
 仕組みとしては新しいAPIを何も追加しておらず、`data/index.html`の`autoHaikuFor()`が、M5StickV撮影側は写真確認の定期ポーリング（`refreshCameraStatus()`、3秒おき）の中で新しいフレームが届いたことを検知するたびに、アップロード側はファイル選択直後に、それぞれ呼び出されます。この関数が俳句設定カードの選択（`none`/`generate`/`print`）を見て、`none`なら何もせず、`generate`以上なら`requestHaiku()`を、`print`ならさらに`printHaikuFromText()`まで呼び出します。M5StickV設定カードの事後閲覧／プレビュー確認モードとはまったく別の設定である点に注意してください——写真自体の自動印刷・確認待ちの動作は`camMode`（`auto`／`preview`の2値）が、俳句・ポエムの自動化は`autoMode`（`none`／`generate`／`print`の3値、`Haiku`モジュール側で保持）が、それぞれ独立して決めます。**この自動化はブラウザのJavaScriptが担っている**ため、m5webページを開いたタブが無ければ何も起きません（写真自体はATOM Lite単体で自動印刷されるので、そちらは通常どおり動きます）。連写のように短時間で次の写真が届くと、前の俳句生成がまだ実行中の場合はその回の俳句生成をスキップする、という単純な仕組みで多重実行を避けています（凝ったキューは組んでいません）。
+
+### 8.5　外部プログラムから写真を送る（`/api/print/photo`）
+
+ここまでの`/api/print/image`は、384dot幅・1bpp（白黒2値）へ変換済みの生ビットマップしか受け付けません。ブラウザ（`data/index.html`）はCanvasで誤差拡散ディザリングを行ってからこの形式に変換して送っていますが、外部プログラムから直接使おうとすると、呼び出し側が同じディザリングアルゴリズムを自前で実装しなければならず、ハードルが高いという問題がありました。
+
+`/api/print/photo`はこの問題を解消するために追加したエンドポイントで、**通常のJPEG画像ファイルをそのまま**受け取ります。デコード・384dot幅へのリサイズ・ディザリングはすべてATOM Lite本体側（`src/jpeg_print.cpp`）で行い、その後は他の印刷経路と同じく印刷＋ギャラリー保存まで完結します。
+
+```bash
+curl -F "photo=@snapshot.jpg" \
+  "http://m5web.local/api/print/photo?label=玄関&location=自宅"
+```
+
+- **`label`・`location`**（どちらもqueryパラメータ、任意）：印刷時に日付・時刻とあわせてキャプション帯に焼き込まれます。`label`はM5StickVの検出ラベルに相当する短いタグ、`location`は任意の地名などを想定しています。両方省略した場合は日付・時刻のみ（クロックが未同期ならそれも省略されます）。
+- **画像サイズの上限は400KB**です。それを超えるアップロードは`413`で拒否されるため、送信前に呼び出し側でリサイズ・圧縮しておく必要があります（目安として、長辺2000px程度・JPEG品質80%前後まで落とせば大抵400KB以内に収まります）。
+- **アスペクト比が極端に縦長の画像は`400`で拒否されます**（384dot幅で換算した高さが約250mm相当の上限を超える場合）。
+- 対応形式は**JPEGのみ**です（PNG等は非対応）。
+
+**なぜJPEGデコードをATOM Lite本体で行うのか**——8.4節で見た俳句生成のOpenAI連携は、当初ATOM Lite本体からHTTPS通信しようとして、mbedTLSのメモリ確保に繰り返し失敗し、最終的にブラウザ側の処理に切り替えた経緯があります（同節参照）。この教訓に照らせば、JPEGデコードも本来はブラウザ側（あるいは外部プログラム自身）に任せたい重い処理です。しかし今回は「ブラウザを介さず外部プログラムから直接写真を送りたい」という要求そのものが目的であるため、あえてATOM Lite本体でのJPEGデコードというリスクを取って実装しています。
+
+デコード処理（`TJpg_Decoder`ライブラリを使用）は、画像全体を一度にメモリへ展開するのではなく、JPEGのMCU（最小符号化単位、最大16行分）ごとに届くデコード結果を、数十行分の「バンド」単位でリサイズ・ディザリングして印刷・保存に回すストリーミング設計にしてあります。とはいえ、**本書執筆時点でこの機能は実機での動作確認ができていません**。実機で`out of memory`のようなエラーが出る場合は、`src/jpeg_print.cpp`の`kDecodeWidthCap`（デコード時の内部解像度の上限）を下げるか、送信する画像自体をより小さくリサイズしてみてください。
 
 ---
 
@@ -1349,6 +1372,7 @@ src/
   clock.*                 NTPによる時刻同期（JST固定）
   openai.*                 OpenAI APIキーの保存・受け渡しのみ（HTTPS通信自体はブラウザ側、8.4節）
   haiku.*                  俳句/ポエムの形式・著者名の保存・受け渡しのみ（生成・印字描画はブラウザ側、8.4節）
+  jpeg_print.*             /api/print/photo用: JPEGデコード(TJpg_Decoder)→リサイズ→ditherへ橋渡し→印刷+ギャラリー保存（8.5節、本プロジェクト唯一の外部ライブラリ依存）
 data/
   index.html              m5web本体（UI＋Canvas画像変換、外部CDN依存なし・単一ファイル）
 arduino/m5web/
