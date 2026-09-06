@@ -10,9 +10,10 @@
 //   2. Install "esp32" by Espressif Systems, then select board "M5Atom".
 //   3. Tools > Partition Scheme: any scheme with a SPIFFS/LittleFS region
 //      (e.g. "Default 4MB with spiffs").
-//   4. Library Manager: install "TJpg_Decoder" by Bodmer — the only
-//      external dependency this firmware has (see jpeg_print.h/.cpp,
-//      used by the /api/print/photo endpoint).
+//   4. Library Manager: install "TJpg_Decoder" by Bodmer (see
+//      jpeg_print.h/.cpp, /api/print/photo) and "JPEGENC" by bitbank2
+//      (see jpeg_capture.h/.cpp, GET /capture) — the only two external
+//      dependencies this firmware has.
 //   5. Upload this sketch normally (Sketch > Upload), then upload the
 //      data/ folder to LittleFS — see README.md for the plugin needed.
 

@@ -9,6 +9,7 @@
 #include "clock.h"
 #include "gallery.h"
 #include "haiku.h"
+#include "jpeg_capture.h"
 #include "jpeg_print.h"
 #include "led.h"
 #include "openai.h"
@@ -440,6 +441,27 @@ void handleCameraFrame() {
     server.client().write(data, len);
 }
 
+// GET /capture — deliberately no /api prefix, matching the plain
+// "snapshot URL" convention generic camera integrations (Home
+// Assistant's generic camera platform, motion-detection tools, etc.)
+// expect: hit a URL, get an image/jpeg body back, nothing else involved.
+// See jpeg_capture.h for what this actually contains (a downscaled,
+// JPEG-compressed version of the same dithered black/white bitmap
+// /api/camera/frame serves raw) and its untested-on-real-hardware
+// caveat.
+void handleCapture() {
+    const uint8_t *buf = nullptr;
+    size_t len = 0;
+    String error;
+    if (!JpegCapture::encodeCurrentFrame(buf, len, error)) {
+        sendPlain(404, error);
+        return;
+    }
+    server.setContentLength(len);
+    server.send(200, "image/jpeg", "");  // headers + empty body
+    server.client().write(buf, len);     // same raw-binary-write pattern as handleCameraFrame() above
+}
+
 void handleGalleryList() {
     Gallery::Entry entries[Gallery::kMaxEntries];
     size_t count = Gallery::list(entries, Gallery::kMaxEntries);
@@ -645,6 +667,7 @@ void begin() {
     server.on("/api/camera/rotate", HTTP_POST, handleCameraRotate);
     server.on("/api/camera/rotate-default", HTTP_POST, handleCameraRotateDefault);
     server.on("/api/camera/frame", HTTP_GET, handleCameraFrame);
+    server.on("/capture", HTTP_GET, handleCapture);
     server.on("/api/gallery", HTTP_GET, handleGalleryList);
     server.on("/api/gallery/frame", HTTP_GET, handleGalleryFrame);
     server.on("/api/gallery/print", HTTP_POST, handleGalleryPrint);

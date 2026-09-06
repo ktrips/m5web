@@ -30,8 +30,9 @@ PlatformIO / Arduino IDE のどちらでも書き込める。中身は同じフ�
 ### PlatformIO（推奨）
 
 VSCode + PlatformIO拡張、または `pio` CLI を使う。ライブラリ（`platformio.ini`の
-`lib_deps`にある`TJpg_Decoder`——`/api/print/photo`のJPEGデコード用、本プロジェクト唯一の
-外部依存）は初回ビルド時に自動でダウンロードされる。
+`lib_deps`にある`TJpg_Decoder`——`/api/print/photo`のJPEGデコード用——と`JPEGENC`——
+`GET /capture`のJPEGエンコード用、本プロジェクトの外部依存はこの2つのみ）は初回ビルド時に
+自動でダウンロードされる。
 
 ```bash
 pio run -t upload      # ファームウェア書き込み
@@ -57,8 +58,9 @@ Arduino IDEはスケッチフォルダ直下にファイルを置く必要があ
    を追加し、"esp32 by Espressif Systems" をインストール。
 2. ボードに **M5Atom** を選択。
 3. `ツール > Partition Scheme` はSPIFFS/LittleFS領域のあるもの（例: "Default 4MB with spiffs"）を選択。
-4. ライブラリマネージャで **TJpg_Decoder**（Bodmer）をインストール
-   （`/api/print/photo`のJPEGデコード用、本プロジェクト唯一の外部依存）。
+4. ライブラリマネージャで **TJpg_Decoder**（Bodmer、`/api/print/photo`のJPEGデコード用）と
+   **JPEGENC**（bitbank2、`GET /capture`のJPEGエンコード用）をインストール
+   （本プロジェクトの外部依存はこの2つのみ）。
 5. `arduino/m5web/m5web.ino` を開いて スケッチ > マイコンボードに書き込む。
 6. `data/index.html` はLittleFSへの書き込みが別途必要。Arduino IDE 2.xの場合は
    [arduino-littlefs-upload](https://github.com/earlephilhower/arduino-littlefs-upload) プラグインを
@@ -602,6 +604,31 @@ ATOM Lite本体がそのURLへHTTP GETリクエストを送り、レスポンス
 `src/jpeg_print.cpp`のコメント参照）、実機で`out of memory`のようなエラーが出る場合は
 同ファイルの`kDecodeWidthCap`を下げるか、送信する画像自体をより小さくリサイズすること。
 
+## 外部プログラムへの写真送信（`GET /capture`）
+
+外部プログラム・監視ツール（Home Assistantの汎用カメラ連携など）から、m5webを一般的な
+ネットワークカメラのように「URLにGETしたらJPEGが返ってくる」形で使いたい場合のAPI。
+`/api`プレフィックスを付けていないのは、この手のツールが期待する典型的な「スナップショット
+URL」の見た目に合わせるため。
+
+```bash
+curl -o snapshot.jpg http://m5web.local/capture
+```
+
+- 返すのは**M5StickVカメラの直近フレーム**（`/api/camera/frame`が生ビットマップで返すのと
+  同じデータ）。写真アップロード・外部API経由の写真は対象外。
+- まだ1枚もフレームを受信していない場合は`404`。
+- **返すJPEGは、印刷用に変換済みの白黒2値（ディザリング）画像を圧縮しただけのもの**。
+  本プロジェクトはフルカラー・グレースケールの元データを保持しないため、滑らかな写真には
+  ならない（ディザリングの網目模様がそのままJPEGとして圧縮される）。
+- メモリ制約のため、フレームの高さが一定（300dot程度）を超える場合は、縦横とも同じ比率で
+  自動的にダウンスケールしてからエンコードする（印刷解像度そのままでは返らない）。
+
+**⚠️ こちらも実機での動作確認ができていない機能**。`/api/print/photo`のJPEG**デコード**に
+加えて、今度はJPEG**エンコード**という別方向の処理を、同じメモリ制約のあるボードに追加で
+背負わせている（`JPEGENC`ライブラリ、`src/jpeg_capture.cpp`）。実機で`out of memory`の
+ようなエラーが出る場合は、同ファイルの`kMaxOutputHeight`をさらに下げること。
+
 ## 制限事項
 
 - 印刷幅は58mmヘッド固定の384dot。
@@ -632,7 +659,9 @@ src/
   haiku.*               俳句/ポエムの形式・著者名の保存・受け渡しのみ（生成・印字描画はブラウザ側、
                          詳細は[俳句生成](#俳句生成openai連携)）
   jpeg_print.*           /api/print/photo用: JPEGデコード(TJpg_Decoder)→リサイズ→ditherへ橋渡し
-                         →印刷+ギャラリー保存。本プロジェクト唯一の外部ライブラリ依存
+                         →印刷+ギャラリー保存
+  jpeg_capture.*         GET /capture用: 現在のM5StickVフレームをJPEGエンコード(JPEGENC)
+                         して返す。ダウンスケールでメモリを抑制
 data/
   index.html          m5web本体（UI + Canvas画像変換, 外部CDN依存なし・単一ファイル）
 arduino/m5web/
@@ -666,6 +695,7 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/camera/mode` | `mode`=`auto`／`preview` (form) で確認モードを切り替え（再起動後も保持） |
 | POST | `/api/camera/settings` | `brightness`,`contrast` (form, -100〜100) で次フレームからの既定調整値を設定（再起動後も保持） |
 | GET | `/api/camera/frame` | 直近フレームの1bpp生ビットマップ（`X-Frame-Width`/`X-Frame-Height`ヘッダ付き） |
+| GET | `/capture` | 直近フレームをJPEGエンコードして返す（`Content-Type: image/jpeg`、`/api`プレフィックス無し。詳細は後述） |
 | POST | `/api/camera/print` | 直近フレームを印刷（確認待ちならそれを確定、そうでなければ再印刷） |
 | POST | `/api/camera/discard` | プレビュー確認方式で確認待ちのフレームを破棄 |
 | POST | `/api/camera/rotate` | 直近フレームを90°時計回りに回転（384dot幅へリスケールし直すため、繰り返し呼べる） |

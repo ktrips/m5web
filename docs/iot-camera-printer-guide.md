@@ -423,7 +423,7 @@ PlatformIOは、Visual Studio Code（VSCode）の拡張機能として使える�
 3. インストール後、VSCodeを再起動する
 4. 本プロジェクトのフォルダ（`platformio.ini`が置かれているルートフォルダ）をVSCodeで開く
 
-PlatformIOは`platformio.ini`の内容を読み取り、必要なツールチェーン（ESP32用のコンパイラなど）や、`lib_deps`に列挙されたライブラリ（本書執筆時点では**TJpg_Decoder**——`/api/print/photo`のJPEGデコード用、本プロジェクト唯一の外部ライブラリ依存です。8.5節で扱います）を自動的にダウンロードします。初回はやや時間がかかりますが、以降のビルドは高速です。
+PlatformIOは`platformio.ini`の内容を読み取り、必要なツールチェーン（ESP32用のコンパイラなど）や、`lib_deps`に列挙されたライブラリ（本書執筆時点では**TJpg_Decoder**——`/api/print/photo`のJPEGデコード用（8.5節）と、**JPEGENC**——`GET /capture`のJPEGエンコード用（8.6節）。本プロジェクトの外部ライブラリ依存はこの2つのみです）を自動的にダウンロードします。初回はやや時間がかかりますが、以降のビルドは高速です。
 
 CLIに慣れている場合は、`pio`コマンドをターミナルから直接使うこともできます。
 
@@ -513,7 +513,7 @@ M5Stackシリーズを制御するには、機種ごとに用意された公式�
 
 ATOM Lite用のWeb UI（`data/index.html`）をLittleFSへ書き込むには、Arduino IDE単体では機能が不足しています。IDE 2.x系では[arduino-littlefs-upload](https://github.com/earlephilhower/arduino-littlefs-upload)というプラグインを追加インストールし、コマンドパレットから「Upload LittleFS to Pico/ESP8266/ESP32」を実行します（IDE 1.8系の場合は同等の「ESP32 Sketch Data Upload」ツールを使用）。
 
-ATOM Lite本体側も、ライブラリマネージャから**TJpg_Decoder**（Bodmer）を追加でインストールしてください——本プロジェクト唯一の外部ライブラリ依存で、`/api/print/photo`エンドポイント（8.5節）のJPEGデコードにのみ使われます。
+ATOM Lite本体側も、ライブラリマネージャから**TJpg_Decoder**（Bodmer、`/api/print/photo`エンドポイント〔8.5節〕のJPEGデコード用）と**JPEGENC**（bitbank2、`GET /capture`エンドポイント〔8.6節〕のJPEGエンコード用）を追加でインストールしてください——本プロジェクトの外部ライブラリ依存はこの2つのみです。
 
 M5PaperColorの場合は、ライブラリマネージャから**M5Unified**・**M5GFX**（いずれもM5Stack）と**ArduinoJson**（Benoit Blanchon）の3つを追加でインストールしてください。
 
@@ -998,6 +998,7 @@ Web UIが内部で使っているものと同じHTTP APIは、外部プログラ
 | POST | `/api/camera/mode` | `mode`=`auto`／`preview`（form）で確認モードを切り替え |
 | POST | `/api/camera/settings` | `brightness`, `contrast`（form, -100〜100）で次フレームからの既定調整値を設定 |
 | GET | `/api/camera/frame` | 直近フレームの1bpp生ビットマップ |
+| GET | `/capture` | 直近フレームをJPEGエンコードして返す（`Content-Type: image/jpeg`、`/api`プレフィックス無し。8.6節） |
 | POST | `/api/camera/print` | 直近フレームを印刷 |
 | POST | `/api/camera/discard` | プレビュー確認方式で確認待ちのフレームを破棄 |
 | POST | `/api/camera/rotate` | 直近フレームを90度時計回りに回転（384dot幅へリスケールし直すため繰り返し呼べる） |
@@ -1154,6 +1155,23 @@ ATOM Lite本体がそのURLへ自らHTTP GETリクエストを送って写真を
 **なぜJPEGデコードをATOM Lite本体で行うのか**——8.4節で見た俳句生成のOpenAI連携は、当初ATOM Lite本体からHTTPS通信しようとして、mbedTLSのメモリ確保に繰り返し失敗し、最終的にブラウザ側の処理に切り替えた経緯があります（同節参照）。この教訓に照らせば、JPEGデコードも本来はブラウザ側（あるいは外部プログラム自身）に任せたい重い処理です。しかし今回は「ブラウザを介さず外部プログラムから直接写真を送りたい」という要求そのものが目的であるため、あえてATOM Lite本体でのJPEGデコードというリスクを取って実装しています。
 
 デコード処理（`TJpg_Decoder`ライブラリを使用）は、画像全体を一度にメモリへ展開するのではなく、JPEGのMCU（最小符号化単位、最大16行分）ごとに届くデコード結果を、数十行分の「バンド」単位でリサイズ・ディザリングして印刷・保存に回すストリーミング設計にしてあります。とはいえ、**本書執筆時点でこの機能は実機での動作確認ができていません**。実機で`out of memory`のようなエラーが出る場合は、`src/jpeg_print.cpp`の`kDecodeWidthCap`（デコード時の内部解像度の上限）を下げるか、送信する画像自体をより小さくリサイズしてみてください。
+
+### 8.6　外部プログラムへ写真を送る（`GET /capture`）
+
+ここまでの節はすべて「外部から写真を受け取る」方向のAPIでしたが、`GET /capture`は逆向き——**m5webから外部プログラムへ写真を渡す**エンドポイントです。Home Assistantの汎用カメラ連携や、各種の監視・自動化ツールが期待する典型的な「スナップショットURL」（URLにGETリクエストを送るだけでJPEG画像が返ってくる）の形に合わせてあり、`/api`プレフィックスを付けていないのもそのためです。
+
+```bash
+curl -o snapshot.jpg http://m5web.local/capture
+```
+
+- 返すのは**M5StickVカメラの直近フレーム**です。`/api/camera/frame`が生の1bppビットマップとして返すのと同じデータで、写真アップロードや外部API経由（8.5節）で送られた写真は対象外です。
+- まだ1枚もフレームを受信していない場合は`404`を返します。
+- **返すJPEGは、印刷用に変換済みの白黒2値（ディザリング）画像を圧縮しただけのもの**です。本プロジェクトはフルカラー・グレースケールの元データを保持しない設計（9章で詳しく扱います）のため、滑らかな写真にはならず、ディザリングの網目模様がそのままJPEGとして圧縮されます。
+- メモリ制約のため、フレームの高さが一定（300dot程度）を超える場合は、縦横とも同じ比率で自動的にダウンスケールしてからエンコードします。印刷解像度そのままの高精細なJPEGが返るわけではありません。
+
+**なぜJPEGエンコードもATOM Lite本体で行うのか**——8.5節で見たJPEG*デコード*と同じ判断です。本来ならこの手の重い処理はブラウザや外部プログラム自身に任せたいところですが、`/capture`は「ブラウザを介さず、外部プログラムが単純なGETリクエストだけで写真を受け取れる」ことそのものが目的なので、あえてATOM Lite本体でのJPEG*エンコード*というリスクを追加で取っています。使用しているのは`JPEGENC`（bitbank2）ライブラリです。
+
+**本書執筆時点でこの機能も実機での動作確認ができていません**。実機で`out of memory`のようなエラーが出る場合は、`src/jpeg_capture.cpp`の`kMaxOutputHeight`（ダウンスケール後の出力高さの上限）をさらに下げてみてください。
 
 ---
 
@@ -1392,7 +1410,8 @@ src/
   clock.*                 NTPによる時刻同期（JST固定）
   openai.*                 OpenAI APIキーの保存・受け渡しのみ（HTTPS通信自体はブラウザ側、8.4節）
   haiku.*                  俳句/ポエムの形式・著者名の保存・受け渡しのみ（生成・印字描画はブラウザ側、8.4節）
-  jpeg_print.*             /api/print/photo用: JPEGデコード(TJpg_Decoder)→リサイズ→ditherへ橋渡し→印刷+ギャラリー保存（8.5節、本プロジェクト唯一の外部ライブラリ依存）
+  jpeg_print.*             /api/print/photo用: JPEGデコード(TJpg_Decoder)→リサイズ→ditherへ橋渡し→印刷+ギャラリー保存（8.5節）
+  jpeg_capture.*           GET /capture用: 現在のM5StickVフレームをJPEGエンコード(JPEGENC)して返す。ダウンスケールでメモリを抑制（8.6節）
 data/
   index.html              m5web本体（UI＋Canvas画像変換、外部CDN依存なし・単一ファイル）
 arduino/m5web/
