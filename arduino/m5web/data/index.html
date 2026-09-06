@@ -223,7 +223,38 @@
     </div>
 
     <div class="card">
-      <h2>Put TEXT for print</h2>
+      <h2>日本語印刷</h2>
+      <textarea id="jpTextInput" placeholder="ここに日本語のテキストを入力してください"></textarea>
+      <div class="grid2">
+        <div class="radio-line">
+          <input type="radio" name="jpOrientation" id="jpOrientationHorizontal" value="horizontal" checked>
+          <label for="jpOrientationHorizontal" style="margin:0;color:var(--text)">横書き</label>
+        </div>
+        <div class="radio-line">
+          <input type="radio" name="jpOrientation" id="jpOrientationVertical" value="vertical">
+          <label for="jpOrientationVertical" style="margin:0;color:var(--text)">縦書き</label>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="radio-line">
+          <input type="radio" name="jpFont" id="jpFontMincho" value="mincho" checked>
+          <label for="jpFontMincho" style="margin:0;color:var(--text)">明朝</label>
+        </div>
+        <div class="radio-line">
+          <input type="radio" name="jpFont" id="jpFontGothic" value="gothic">
+          <label for="jpFontGothic" style="margin:0;color:var(--text)">ゴシック（太字）</label>
+        </div>
+      </div>
+      <div class="radio-line">
+        <input type="checkbox" id="jpBorder" checked>
+        <label for="jpBorder" style="margin:0;color:var(--text)">枠を付ける</label>
+      </div>
+      <button class="primary full" id="printJpTextBtn" style="margin-top:10px">日本語を印刷</button>
+      <div class="msg" id="jpTextMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Put TEXT for print (English)</h2>
       <textarea id="textInput" placeholder="Put TEXT in English only for printing out"></textarea>
       <button class="primary full" id="printTextBtn" style="margin-top:10px">Print TEXT</button>
       <div class="msg" id="textMsg"></div>
@@ -233,6 +264,10 @@
       <h2>QRコードを印刷</h2>
       <p class="meta">URLなどのテキストをQRコードに変換してプリントします（変換はプリンター本体が行います）。</p>
       <input type="text" id="qrInput" placeholder="https://example.com">
+      <div class="radio-line">
+        <input type="checkbox" id="qrShowUrl" checked>
+        <label for="qrShowUrl" style="margin:0;color:var(--text)">QRの下にURLを印刷する</label>
+      </div>
       <button class="primary full" id="printQrBtn" style="margin-top:10px">QRコードを印刷</button>
       <div class="msg" id="qrMsg"></div>
     </div>
@@ -1419,12 +1454,208 @@ $("printQrBtn").addEventListener("click", async () => {
   btn.disabled = true;
   showMsg(msg, "送信中…", "info");
   try {
+    const showUrl = $("qrShowUrl").checked;
     const r = await fetch("/api/print/qr", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "url=" + encodeURIComponent(url),
+      body: "url=" + encodeURIComponent(url) + "&showUrl=" + (showUrl ? "1" : "0"),
     });
     if (!r.ok) throw new Error(await r.text());
+    showMsg(msg, "印刷しました", "ok");
+  } catch (e) {
+    showMsg(msg, "印刷に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---------- Japanese text print (horizontal / vertical, optional border) ----------
+
+const JP_GOTHIC_FONT_STACK =
+  '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif';
+
+// Font size, in px, used for both orientations — chosen to read at roughly
+// the same scale as the haiku print (see HAIKU_FONT_STACK below), rather
+// than shrinking to fit however much text was typed.
+const JP_TEXT_FONT_SIZE = 44;
+
+// `fontChoice` is "mincho" (明朝 — reuses the haiku print's font stack) or
+// "gothic" (ゴシック太字 — bold sans, set via the weight prefix on ctx.font).
+function jpFontString(fontChoice, sizePx) {
+  if (fontChoice === "gothic") return "900 " + sizePx + "px " + JP_GOTHIC_FONT_STACK;
+  return sizePx + "px " + HAIKU_FONT_STACK;
+}
+
+// Wraps `text` (split on explicit newlines first) into lines that fit
+// `maxWidth`, breaking character-by-character since Japanese text has no
+// spaces to break on. `ctx` must already have its font set.
+function wrapJapaneseLines(ctx, text, maxWidth) {
+  const lines = [];
+  for (const paragraph of text.split("\n")) {
+    if (paragraph.length === 0) {
+      lines.push("");
+      continue;
+    }
+    let cur = "";
+    for (const ch of paragraph) {
+      const next = cur + ch;
+      if (cur && ctx.measureText(next).width > maxWidth) {
+        lines.push(cur);
+        cur = ch;
+      } else {
+        cur = next;
+      }
+    }
+    lines.push(cur);
+  }
+  return lines;
+}
+
+// Renders `text` left-to-right, top-to-bottom, sized to the printer's fixed
+// 384-dot width, wrapping as needed. `withBorder` draws the same
+// double-line frame used elsewhere on this page.
+function renderHorizontalJpTextCanvas(text, withBorder, fontChoice) {
+  const w = PRINT_WIDTH;
+  const margin = withBorder ? 24 : 12;
+  const fontSize = JP_TEXT_FONT_SIZE;
+  const lineHeight = Math.round(fontSize * 1.5);
+  const font = jpFontString(fontChoice, fontSize);
+
+  const measureCanvas = document.createElement("canvas");
+  const measureCtx = measureCanvas.getContext("2d");
+  measureCtx.font = font;
+  const lines = wrapJapaneseLines(measureCtx, text, w - margin * 2);
+
+  let h = margin * 2 + lines.length * lineHeight;
+  if (h > maxHeightDots) h = maxHeightDots;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, w, h);
+
+  if (withBorder) {
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(8, 8, w - 16, h - 16);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(15, 15, w - 30, h - 30);
+  }
+
+  ctx.fillStyle = "#000";
+  ctx.font = font;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  for (let i = 0; i < lines.length; i++) {
+    const y = margin + i * lineHeight;
+    if (y > h - margin) break;
+    ctx.fillText(lines[i], margin, y);
+  }
+  return canvas;
+}
+
+// Renders `text` as 縦書き (top-to-bottom, right-to-left): each explicit
+// source line becomes its own column, columns laid out right to left so
+// the first line reads first, sized to the printer's fixed 384-dot width.
+// `withBorder` draws the same double-line frame used elsewhere on this page.
+function renderVerticalJpTextCanvas(text, withBorder, fontChoice) {
+  const cols = text.split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
+  if (cols.length === 0) cols.push(text.trim());
+
+  const w = PRINT_WIDTH;
+  const margin = withBorder ? 20 : 10;
+  const gap = 10;
+  const gapCount = cols.length - 1;
+  // Capped at the haiku print's typical character-cell size (see
+  // renderVerticalHaikuCanvas) rather than always shrinking to fit — text
+  // as short as a haiku ends up the same size; more columns than that
+  // still shrink to stay within the printer's fixed width.
+  let cell = (w - margin * 2 - gap * gapCount) / (cols.length * 1.1);
+  cell = Math.min(cell, 88);
+  const colWidth = cell * 1.1;
+
+  const contentBottom = Math.max(...cols.map((c) => Math.max(c.length, 1) * cell));
+  let h = margin * 2 + contentBottom;
+  if (h > maxHeightDots) h = maxHeightDots;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, w, h);
+
+  if (withBorder) {
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(8, 8, w - 16, h - 16);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(15, 15, w - 30, h - 30);
+  }
+
+  ctx.fillStyle = "#000";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = jpFontString(fontChoice, Math.floor(cell * 0.8));
+
+  for (let i = 0; i < cols.length; i++) {
+    const x = w - margin - colWidth / 2 - i * (colWidth + gap);
+    const chars = cols[i];
+    for (let j = 0; j < chars.length; j++) {
+      const y = margin + cell / 2 + j * cell;
+      if (y > h - margin) break;
+      const ch = chars[j];
+      if (ch === "ー" || ch === "―" || ch === "-") {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.PI / 2);
+        ctx.fillText(ch, 0, 0);
+        ctx.restore();
+      } else {
+        ctx.fillText(ch, x, y);
+      }
+    }
+  }
+  return canvas;
+}
+
+$("printJpTextBtn").addEventListener("click", async () => {
+  const text = $("jpTextInput").value.trim();
+  const msg = $("jpTextMsg");
+  if (!text) {
+    showMsg(msg, "テキストを入力してください", "err");
+    return;
+  }
+  const vertical = $("jpOrientationVertical").checked;
+  const withBorder = $("jpBorder").checked;
+  const fontChoice = $("jpFontGothic").checked ? "gothic" : "mincho";
+  const btn = $("printJpTextBtn");
+  btn.disabled = true;
+  showMsg(msg, "印刷用の画像を作っています…", "info");
+  try {
+    const canvas = vertical
+      ? renderVerticalJpTextCanvas(text, withBorder, fontChoice)
+      : renderHorizontalJpTextCanvas(text, withBorder, fontChoice);
+    const w = canvas.width;
+    const h = canvas.height;
+
+    const ctx = canvas.getContext("2d");
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const gray = toGrayscale(imageData, 0, 0, false);
+    const bin = ditherThreshold(gray, w, h); // plain black/white text — no dithering needed
+    compositeQrWatermark(bin, w, h);
+    const packed = packBits(bin, w, h);
+
+    showMsg(msg, "送信中…", "info");
+    const beginRes = await fetch("/api/print/image/begin", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `w=${w}&h=${h}&location=${encodeURIComponent(resolvedLocationText)}`,
+    });
+    if (!beginRes.ok) throw new Error(await beginRes.text());
+    await uploadBytes(packed);
     showMsg(msg, "印刷しました", "ok");
   } catch (e) {
     showMsg(msg, "印刷に失敗しました: " + e.message, "err");

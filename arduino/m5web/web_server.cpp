@@ -178,9 +178,13 @@ void handlePrintQr() {
         sendPlain(400, "url too long (max " + String(kMaxQrLength) + " chars)");
         return;
     }
-    Serial.printf("[web] print QR: %s\n", data.c_str());
+    bool showUrl = server.hasArg("showUrl") && server.arg("showUrl") == "1";
+    Serial.printf("[web] print QR: %s%s\n", data.c_str(), showUrl ? " (+URL)" : "");
     Printer::reset();
     Printer::printQRCode(data);
+    if (showUrl) {
+        Printer::printText(data);
+    }
     sendPlain(200, "OK");
 }
 
