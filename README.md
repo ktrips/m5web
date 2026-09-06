@@ -30,8 +30,9 @@ PlatformIO / Arduino IDE のどちらでも書き込める。中身は同じフ�
 ### PlatformIO（推奨）
 
 VSCode + PlatformIO拡張、または `pio` CLI を使う。ライブラリ（`platformio.ini`の
-`lib_deps`にある`TJpg_Decoder`——`/api/print/photo`のJPEGデコード用、本プロジェクト唯一の
-外部依存）は初回ビルド時に自動でダウンロードされる。
+`lib_deps`にある`TJpg_Decoder`——`/api/print/photo`のJPEGデコード用——と`JPEGENC`——
+`GET /capture`のJPEGエンコード用、本プロジェクトの外部依存はこの2つのみ）は初回ビルド時に
+自動でダウンロードされる。
 
 ```bash
 pio run -t upload      # ファームウェア書き込み
@@ -57,8 +58,9 @@ Arduino IDEはスケッチフォルダ直下にファイルを置く必要があ
    を追加し、"esp32 by Espressif Systems" をインストール。
 2. ボードに **M5Atom** を選択。
 3. `ツール > Partition Scheme` はSPIFFS/LittleFS領域のあるもの（例: "Default 4MB with spiffs"）を選択。
-4. ライブラリマネージャで **TJpg_Decoder**（Bodmer）をインストール
-   （`/api/print/photo`のJPEGデコード用、本プロジェクト唯一の外部依存）。
+4. ライブラリマネージャで **TJpg_Decoder**（Bodmer、`/api/print/photo`のJPEGデコード用）と
+   **JPEGENC**（bitbank2、`GET /capture`のJPEGエンコード用）をインストール
+   （本プロジェクトの外部依存はこの2つのみ）。
 5. `arduino/m5web/m5web.ino` を開いて スケッチ > マイコンボードに書き込む。
 6. `data/index.html` はLittleFSへの書き込みが別途必要。Arduino IDE 2.xの場合は
    [arduino-littlefs-upload](https://github.com/earlephilhower/arduino-littlefs-upload) プラグインを
@@ -116,6 +118,9 @@ Wi-Fi設定をやり直したい場合は、ATOM本体のボタンを5秒以上�
   カメラは**次に受信するフレームから**この値がサーバー側で適用される（既に受信・表示中の
   1枚には遡って反映されない）。写真アップロードは**次に選択する写真の初期値**として使われ、
   選択後は「画像を印刷」カードで個別に調整できる（この個別調整はデフォルト値自体を書き換えない）。
+  `/api/print/photo`・`/api/print/photo/url`（外部プログラムからの写真送信、後述）で送られた
+  JPEGにも、この値がサーバー側でそのまま適用される（M5StickVカメラと同じ扱いで、個別調整の
+  余地は無い）。
 - **M5StickV設定**: 事後閲覧方式／プレビュー確認方式の切り替え（詳細は後述
   「Web上での確認・印刷モード」参照。**写真の自動印刷・確認方式だけを切り替える設定で、
   俳句・ポエムの自動化とは独立している**）に加えて、「回転」ボタンで写真の初期回転
@@ -541,21 +546,55 @@ iPhoneのブラウザを介さず、外部のプログラム・スクリプト�
 エンドポイントは代わりに**通常のJPEG画像ファイルをそのまま**受け取り、ATOM Lite本体側で
 デコード・384dot幅へのリサイズ・ディザリングまで行ってから印刷し、ギャラリーにも保存する。
 
+呼び出し方は2通りあり、**それぞれ別のエンドポイント**になっている（理由は後述）。
+
+**(1) ファイルを直接アップロード**（`/api/print/photo`、multipart/form-data）:
+
 ```bash
 curl -F "photo=@snapshot.jpg" \
   "http://m5web.local/api/print/photo?label=玄関&location=自宅"
 ```
 
+**(2) URLを指定して、ATOM Lite本体に取得させる**（`/api/print/photo/url`、
+`url`をqueryパラメータで指定。ファイルのアップロード自体が不要になる）:
+
+```bash
+curl -X POST "http://m5web.local/api/print/photo/url?url=http://example.com/snapshot.jpg&label=玄関&location=自宅"
+```
+
+ATOM Lite本体がそのURLへHTTP GETリクエストを送り、レスポンスをそのまま一時ファイルに
+保存してから(1)と同じデコード処理にかける。**`url`は`http://`で始まる必要があり、
+`https://`は明示的に拒否される**（`400`エラー）——このボードはHTTPS通信（TLS）を安定して
+扱えないという既知の制約があり（後述「実機での動作確認ができていない機能」参照）、無理に
+対応させず安全側に倒している。写真を`https://`でしか配信できない場所（多くのクラウド
+ストレージなど）に置いている場合は、同一LAN内に立てた簡易HTTPサーバー経由で配信するなど、
+`http://`でアクセスできる形にしてから指定すること。
+
+**`/api/print/photo`と`/api/print/photo/url`が別エンドポイントに分かれている理由**：
+`/api/print/photo`はマルチパートアップロード（ファイル本体を受け取る処理）用のハンドラが
+登録されたルートで、ESP32のWebServerライブラリはこの手のルートに対して、ボディの無い
+リクエスト（`Content-Type`もファイルも無いPOST）を受け取るとハング・接続リセットを起こす
+ことが実機で確認されている。`url`パラメータだけを渡す方式もボディを送らないため、同じ
+ルートに間借りさせるとこの問題を引き起こしてしまう——そのため`/api/print/photo/url`という
+別ルート（アップロードハンドラを登録していない、通常のハンドラのみのルート）に分離して
+ある。**単純な疎通確認のつもりで`/api/print/photo`へボディ無しのPOSTを送るのも同じ理由で
+危険**なので行わないこと。疎通確認には`/api/status`（GET、副作用なし）を使うこと。
+
 - **`label`・`location`（どちらもqueryパラメータ、任意）**: 印刷時に日付・時刻とあわせて
   キャプション帯に焼き込まれる（`label`はM5StickVの検出ラベルに相当する短いタグ、
   `location`は任意の地名など）。両方省略した場合は日付・時刻のみ（クロックが未同期なら
   それも省略）。
-- **画像サイズの上限は400KB**。それを超えるアップロードは`413`で拒否されるので、
+- **画像サイズの上限は400KB**（アップロード・URL取得どちらも共通）。それを超える場合は
+  `413`（アップロード時）または`400`（URL取得時、リモートのサイズ超過）で拒否されるので、
   送信前に呼び出し側でリサイズ・圧縮しておくこと（目安: 長辺2000px程度、JPEG品質80%前後
   まで落とせば大抵400KB以内に収まる）。
 - **アスペクト比が極端に縦長の画像は`400`で拒否される**（384dot幅で換算した高さが
   約250mm相当の上限を超える場合）。
 - 対応形式は**JPEGのみ**（PNG等は非対応）。
+- 設定タブ「デフォルト: 明るさ・コントラスト」の値が、M5StickVカメラと同じ扱いでサーバー側で
+  そのまま適用される（`src/jpeg_print.cpp`が`CameraLink::status()`から読み取る）。写真
+  アップロードのように個別調整はできないため、暗すぎる／薄すぎる場合は設定タブ側の値を
+  変更すること。
 
 **⚠️ 実機での動作確認ができていない機能**。このボード（ESP32-PICO-D4、PSRAM無し）は
 過去にOpenAI連携のHTTPS通信ですらメモリ不足で失敗し、ブラウザ側に処理を移した実績があり
@@ -564,6 +603,31 @@ curl -F "photo=@snapshot.jpg" \
 展開せず、数十行分のバンド単位でストリーミング処理する設計にしてあるが（詳細は
 `src/jpeg_print.cpp`のコメント参照）、実機で`out of memory`のようなエラーが出る場合は
 同ファイルの`kDecodeWidthCap`を下げるか、送信する画像自体をより小さくリサイズすること。
+
+## 外部プログラムへの写真送信（`GET /capture`）
+
+外部プログラム・監視ツール（Home Assistantの汎用カメラ連携など）から、m5webを一般的な
+ネットワークカメラのように「URLにGETしたらJPEGが返ってくる」形で使いたい場合のAPI。
+`/api`プレフィックスを付けていないのは、この手のツールが期待する典型的な「スナップショット
+URL」の見た目に合わせるため。
+
+```bash
+curl -o snapshot.jpg http://m5web.local/capture
+```
+
+- 返すのは**M5StickVカメラの直近フレーム**（`/api/camera/frame`が生ビットマップで返すのと
+  同じデータ）。写真アップロード・外部API経由の写真は対象外。
+- まだ1枚もフレームを受信していない場合は`404`。
+- **返すJPEGは、印刷用に変換済みの白黒2値（ディザリング）画像を圧縮しただけのもの**。
+  本プロジェクトはフルカラー・グレースケールの元データを保持しないため、滑らかな写真には
+  ならない（ディザリングの網目模様がそのままJPEGとして圧縮される）。
+- メモリ制約のため、フレームの高さが一定（300dot程度）を超える場合は、縦横とも同じ比率で
+  自動的にダウンスケールしてからエンコードする（印刷解像度そのままでは返らない）。
+
+**⚠️ こちらも実機での動作確認ができていない機能**。`/api/print/photo`のJPEG**デコード**に
+加えて、今度はJPEG**エンコード**という別方向の処理を、同じメモリ制約のあるボードに追加で
+背負わせている（`JPEGENC`ライブラリ、`src/jpeg_capture.cpp`）。実機で`out of memory`の
+ようなエラーが出る場合は、同ファイルの`kMaxOutputHeight`をさらに下げること。
 
 ## 制限事項
 
@@ -595,7 +659,9 @@ src/
   haiku.*               俳句/ポエムの形式・著者名の保存・受け渡しのみ（生成・印字描画はブラウザ側、
                          詳細は[俳句生成](#俳句生成openai連携)）
   jpeg_print.*           /api/print/photo用: JPEGデコード(TJpg_Decoder)→リサイズ→ditherへ橋渡し
-                         →印刷+ギャラリー保存。本プロジェクト唯一の外部ライブラリ依存
+                         →印刷+ギャラリー保存
+  jpeg_capture.*         GET /capture用: 現在のM5StickVフレームをJPEGエンコード(JPEGENC)
+                         して返す。ダウンスケールでメモリを抑制
 data/
   index.html          m5web本体（UI + Canvas画像変換, 外部CDN依存なし・単一ファイル）
 arduino/m5web/
@@ -623,11 +689,13 @@ Web UIが使っているものと同じHTTP APIを、プログラムから直接
 | POST | `/api/print/test` | 配線確認用の固定テストページを印刷（UI上のボタンは無いが引き続き利用可） |
 | POST | `/api/print/image/begin` | `w`,`h` (form) で次の画像サイズを予約 (wは384固定, h<=`maxHeightDots`) |
 | POST | `/api/print/image` | multipart/form-dataで1bpp生ビットマップ本体をアップロード→即印刷 |
-| POST | `/api/print/photo` | multipart/form-dataでJPEG画像本体をアップロード（`label`,`location`はquery paramでオプション指定）→ATOM Lite本体でデコード・384dot幅にリサイズ・ディザリングして印刷、ギャラリーにも保存（詳細は後述） |
+| POST | `/api/print/photo` | multipart/form-dataでJPEG画像本体をアップロード（`label`,`location`はquery paramでオプション指定）→ATOM Lite本体でデコード・384dot幅にリサイズ・ディザリングして印刷、ギャラリーにも保存（詳細は後述。ボディ無しでの疎通確認は不可、後述の注意点参照） |
+| POST | `/api/print/photo/url` | `url`（query param、`http://`のみ）で指定した写真をATOM Lite本体が取得して印刷。`label`,`location`も同様にquery paramでオプション指定（詳細は後述） |
 | GET | `/api/camera/status` | M5StickVカメラの状態JSON (`mode`,`frameReady`,`pendingPrint`,`width`,`height`,`frameSeq`,`brightness`,`contrast`,`rotationDeg`,`label`) |
 | POST | `/api/camera/mode` | `mode`=`auto`／`preview` (form) で確認モードを切り替え（再起動後も保持） |
 | POST | `/api/camera/settings` | `brightness`,`contrast` (form, -100〜100) で次フレームからの既定調整値を設定（再起動後も保持） |
 | GET | `/api/camera/frame` | 直近フレームの1bpp生ビットマップ（`X-Frame-Width`/`X-Frame-Height`ヘッダ付き） |
+| GET | `/capture` | 直近フレームをJPEGエンコードして返す（`Content-Type: image/jpeg`、`/api`プレフィックス無し。詳細は後述） |
 | POST | `/api/camera/print` | 直近フレームを印刷（確認待ちならそれを確定、そうでなければ再印刷） |
 | POST | `/api/camera/discard` | プレビュー確認方式で確認待ちのフレームを破棄 |
 | POST | `/api/camera/rotate` | 直近フレームを90°時計回りに回転（384dot幅へリスケールし直すため、繰り返し呼べる） |
