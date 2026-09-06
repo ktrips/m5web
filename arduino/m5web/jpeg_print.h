@@ -43,4 +43,20 @@ namespace JpegPrint {
 // Printer::kPrintWidthDots-wide print, out of memory, or a decode error.
 bool printFromFile(const String &path, const String &label, const String &location, String &error);
 
+// Fetches `url` via a plain HTTP GET, streams the response straight to a
+// LittleFS temp file (capped at the same size the direct-upload path
+// enforces, never buffered whole in RAM), then hands it to
+// printFromFile() exactly as if it had arrived via the multipart upload
+// path — see web_server.cpp's /api/print/photo, which offers both this
+// (a `url` query param) and the direct-upload path. Deletes its temp
+// file when done either way.
+//
+// `url` must start with "http://" — https:// is rejected outright, with
+// a clear error explaining why: this board's TLS/heap headroom is
+// exactly what forced OpenAI's own HTTPS calls onto the browser instead
+// (see openai.* / the 俳句生成 section's history) — a WiFiClientSecure
+// fetch here would carry the same risk. Host the photo over plain
+// http:// (e.g. a LAN file server) if the source only serves https://.
+bool fetchAndPrint(const String &url, const String &label, const String &location, String &error);
+
 }  // namespace JpegPrint

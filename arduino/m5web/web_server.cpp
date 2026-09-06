@@ -292,14 +292,33 @@ void handleExternalPhotoChunk() {
 }
 
 void handleExternalPhotoComplete() {
+    String label = server.hasArg("label") ? server.arg("label") : "";
+    String location = server.hasArg("location") ? server.arg("location") : "";
+    String error;
+
+    // `url` (query param) takes priority over any uploaded body: this
+    // request never went through handleExternalPhotoChunk() at all in
+    // that case (no multipart upload for the WebServer library to
+    // dispatch to it), so externalPhotoOk below would just be leftover
+    // state from whatever request happened to run before this one —
+    // checking `url` first avoids depending on it entirely for this path.
+    if (server.hasArg("url")) {
+        bool ok = JpegPrint::fetchAndPrint(server.arg("url"), label, location, error);
+        if (!ok) {
+            Serial.printf("[web] external photo (url): %s\n", error.c_str());
+            sendPlain(400, error);
+            return;
+        }
+        Serial.println("[web] external photo (url) printed");
+        sendPlain(200, "printed");
+        return;
+    }
+
     if (!externalPhotoOk) {
         sendPlain(413, "upload failed or exceeded " + String(kMaxExternalPhotoBytes / 1024) +
                            "KB — please resize/compress the photo before sending");
         return;
     }
-    String label = server.hasArg("label") ? server.arg("label") : "";
-    String location = server.hasArg("location") ? server.arg("location") : "";
-    String error;
     bool ok = JpegPrint::printFromFile(kExternalPhotoTmpPath, label, location, error);
     LittleFS.remove(kExternalPhotoTmpPath);
     if (!ok) {

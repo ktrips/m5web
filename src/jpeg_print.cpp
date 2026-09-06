@@ -1,7 +1,9 @@
 #include "jpeg_print.h"
 
+#include <HTTPClient.h>
 #include <LittleFS.h>
 #include <TJpg_Decoder.h>
+#include <WiFiClient.h>
 #include <string.h>
 
 #include "caption.h"
@@ -20,6 +22,24 @@ namespace {
 // independent kMaxHeightDots=800) rather than shared, matching this
 // project's existing per-module pattern.
 constexpr uint16_t kMaxHeightDots = 2000;
+
+// Temp file for fetchAndPrint()'s downloaded JPEG — deliberately separate
+// from web_server.cpp's own kExternalPhotoTmpPath (the direct-upload
+// path's scratch file) even though the two are never in flight at the
+// same time (the ESP32 WebServer handles one request at a time): keeps
+// this module fully self-contained, not reaching into web_server.cpp's
+// constants.
+constexpr const char *kUrlFetchTmpPath = "/tmp_ext_photo_url.jpg";
+
+// Matches web_server.cpp's kMaxExternalPhotoBytes for the direct-upload
+// path — kept in sync by hand (same per-module-constant pattern as
+// kMaxHeightDots above), since a fetched photo should face the same
+// "please pre-resize/compress" limit an uploaded one does.
+constexpr size_t kMaxExternalPhotoBytes = 400 * 1024;
+
+// Generous but bounded: a slow/stalled remote server shouldn't be able to
+// tie up this board's single-threaded WebServer loop indefinitely.
+constexpr unsigned long kFetchTimeoutMs = 20000;
 
 // Every MCU a JPEG decoder emits is at most 16 pixels tall (8x8 or 16x16
 // depending on chroma subsampling) — sizing the band buffer to this many
@@ -199,6 +219,89 @@ bool printFromFile(const String &path, const String &label, const String &locati
         Led::notifyNewImage();
     }
     return true;
+}
+
+bool fetchAndPrint(const String &url, const String &label, const String &location, String &error) {
+    if (!url.startsWith("http://")) {
+        if (url.startsWith("https://")) {
+            error =
+                "https:// URLs aren't supported — this board's HTTPS/TLS support is unreliable "
+                "(see the OpenAI integration's history in README.md); host the photo over plain "
+                "http:// instead (e.g. a LAN file server)";
+        } else {
+            error = "url must start with http://";
+        }
+        return false;
+    }
+
+    WiFiClient client;
+    HTTPClient http;
+    if (!http.begin(client, url)) {
+        error = "could not start the request — check the URL";
+        return false;
+    }
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        http.end();
+        error = "fetch failed: HTTP " + String(code);
+        return false;
+    }
+
+    int contentLength = http.getSize();  // -1 if the server didn't declare one (chunked transfer)
+    if (contentLength > 0 && (size_t)contentLength > kMaxExternalPhotoBytes) {
+        http.end();
+        error = "remote image too large (max " + String(kMaxExternalPhotoBytes / 1024) + "KB)";
+        return false;
+    }
+
+    File f = LittleFS.open(kUrlFetchTmpPath, "w");
+    if (!f) {
+        http.end();
+        error = "could not open temp file (LittleFS full?)";
+        return false;
+    }
+
+    WiFiClient *stream = http.getStreamPtr();
+    size_t written = 0;
+    uint8_t buf[512];
+    unsigned long start = millis();
+    bool tooLarge = false;
+    while (http.connected() && (contentLength < 0 || written < (size_t)contentLength)) {
+        if (millis() - start > kFetchTimeoutMs) break;
+        size_t avail = stream->available();
+        if (avail == 0) {
+            if (!http.connected()) break;
+            delay(2);
+            continue;
+        }
+        size_t want = sizeof(buf);
+        if (avail < want) want = avail;
+        int n = stream->readBytes(buf, want);
+        if (n <= 0) break;
+        written += n;
+        if (written > kMaxExternalPhotoBytes) {
+            tooLarge = true;
+            break;
+        }
+        f.write(buf, n);
+    }
+    f.close();
+    http.end();
+
+    if (tooLarge) {
+        LittleFS.remove(kUrlFetchTmpPath);
+        error = "remote image too large (max " + String(kMaxExternalPhotoBytes / 1024) + "KB)";
+        return false;
+    }
+    if (written == 0) {
+        LittleFS.remove(kUrlFetchTmpPath);
+        error = "downloaded photo was empty";
+        return false;
+    }
+
+    bool ok = printFromFile(kUrlFetchTmpPath, label, location, error);
+    LittleFS.remove(kUrlFetchTmpPath);
+    return ok;
 }
 
 }  // namespace JpegPrint

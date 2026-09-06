@@ -992,7 +992,7 @@ Web UIが内部で使っているものと同じHTTP APIは、外部プログラ
 | POST | `/api/print/test` | 配線確認用の固定テストページを印刷 |
 | POST | `/api/print/image/begin` | `w`, `h`（form）で次の画像サイズを予約（wは384固定、h<=`maxHeightDots`） |
 | POST | `/api/print/image` | multipart/form-dataで1bpp生ビットマップ本体をアップロード→即印刷 |
-| POST | `/api/print/photo` | multipart/form-dataでJPEG画像本体をアップロード（`label`,`location`はqueryパラメータで任意指定）→ATOM Lite本体でデコード・リサイズ・ディザリングして印刷、ギャラリーにも保存（8.5節） |
+| POST | `/api/print/photo` | multipart/form-dataでJPEG画像本体をアップロード、または`url`（queryパラメータ、`http://`のみ）でATOM Lite本体に取得させる。`label`,`location`もqueryパラメータで任意指定→ATOM Lite本体でデコード・リサイズ・ディザリングして印刷、ギャラリーにも保存（8.5節） |
 | GET | `/api/camera/status` | M5StickVカメラの状態JSON（`mode`, `frameReady`, `pendingPrint`, `width`, `height`, `frameSeq`, `brightness`, `contrast`, `rotationDeg`, `label`） |
 | POST | `/api/camera/mode` | `mode`=`auto`／`preview`（form）で確認モードを切り替え |
 | POST | `/api/camera/settings` | `brightness`, `contrast`（form, -100〜100）で次フレームからの既定調整値を設定 |
@@ -1121,13 +1121,25 @@ requests.post(f"{HOST}/api/print/image",
 
 `/api/print/photo`はこの問題を解消するために追加したエンドポイントで、**通常のJPEG画像ファイルをそのまま**受け取ります。デコード・384dot幅へのリサイズ・ディザリングはすべてATOM Lite本体側（`src/jpeg_print.cpp`）で行い、その後は他の印刷経路と同じく印刷＋ギャラリー保存まで完結します。
 
+呼び出し方は2通りあります。
+
+**(1) ファイルを直接アップロードする方法**（multipart/form-data）:
+
 ```bash
 curl -F "photo=@snapshot.jpg" \
   "http://m5web.local/api/print/photo?label=玄関&location=自宅"
 ```
 
+**(2) URLを指定して、ATOM Lite本体に取得させる方法**（`url`をqueryパラメータで指定）:
+
+```bash
+curl -X POST "http://m5web.local/api/print/photo?url=http://example.com/snapshot.jpg&label=玄関&location=自宅"
+```
+
+`url`を指定した場合はファイルのアップロード自体が不要になり、ATOM Lite本体がそのURLへ自らHTTP GETリクエストを送って写真を取得します（両方指定した場合は`url`が優先されます）。**`url`は`http://`で始まる必要があり、`https://`は`400`エラーで明示的に拒否されます**——このボードはHTTPS通信（TLS）を安定して扱えないという既知の制約があるため（後述の「なぜJPEGデコードをATOM Lite本体で行うのか」参照）、無理に対応させず安全側に倒しています。写真が`https://`でしか配信されていない場合（クラウドストレージなど）は、同一LAN内の簡易HTTPサーバー経由で配信し直すなどして`http://`でアクセスできる形にしてから指定してください。
+
 - **`label`・`location`**（どちらもqueryパラメータ、任意）：印刷時に日付・時刻とあわせてキャプション帯に焼き込まれます。`label`はM5StickVの検出ラベルに相当する短いタグ、`location`は任意の地名などを想定しています。両方省略した場合は日付・時刻のみ（クロックが未同期ならそれも省略されます）。
-- **画像サイズの上限は400KB**です。それを超えるアップロードは`413`で拒否されるため、送信前に呼び出し側でリサイズ・圧縮しておく必要があります（目安として、長辺2000px程度・JPEG品質80%前後まで落とせば大抵400KB以内に収まります）。
+- **画像サイズの上限は400KB**です（アップロード・URL取得のどちらも共通）。超過するとアップロード時は`413`、URL取得時は`400`（リモート側のサイズ超過）で拒否されるため、送信前に呼び出し側でリサイズ・圧縮しておく必要があります（目安として、長辺2000px程度・JPEG品質80%前後まで落とせば大抵400KB以内に収まります）。
 - **アスペクト比が極端に縦長の画像は`400`で拒否されます**（384dot幅で換算した高さが約250mm相当の上限を超える場合）。
 - 対応形式は**JPEGのみ**です（PNG等は非対応）。
 
