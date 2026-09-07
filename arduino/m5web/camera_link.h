@@ -79,6 +79,23 @@ void rotateDefaultBy90();
 
 Status status();
 
+// Populates the "last frame" state directly from an already-dithered 1bpp
+// bitmap (packed, kPrintWidthBytes-wide rows) produced elsewhere — used by
+// jpeg_print.cpp so a photo printed via /api/print/photo (e.g. from the
+// CamS3 companion sketch, or any other external JPEG-print caller) also
+// shows up in the same 「M5StickVカメラ」card a UART-received M5StickV
+// frame would, without needing a UART link. The caller has already printed
+// it by this point — this only updates the display/reprint state
+// (frameReady/frameHeight/frameLabel/frameSeq), leaving pendingPrint false.
+// `height` taller than this module's own internal cap (matching a real
+// UART frame's own limit) is silently truncated to that many rows — the
+// print/gallery save already happened on the full image via the caller's
+// own path, only this preview is capped. Does not apply the persisted
+// default rotation (see rotateDefaultBy90()) — that's a UART-receive-time
+// transform for M5StickV frames specifically; an externally-sourced
+// bitmap arrives already oriented however its caller decided.
+void setExternalFrame(const uint8_t *bitmap, uint16_t height, const String &label);
+
 // Prints the last stored frame — the currently-pending one in preview
 // mode (also clearing pendingPrint), or a plain reprint of whatever was
 // last received/printed otherwise. Returns false if no frame has arrived

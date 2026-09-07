@@ -11,7 +11,11 @@
 // kind of date/time + optional caption every other print path stamps —
 // then saves it to the gallery. Never holds more than one ~16-row decode
 // band in RAM at a time (see jpeg_print.cpp's band-buffer design) rather
-// than buffering the whole decoded image.
+// than buffering the whole decoded image. Also mirrors (up to
+// CameraLink's own height cap) the dithered result into CameraLink via
+// setExternalFrame(), so the print shows up in the m5webページ's
+// 「M5StickVカメラ」card the same way a UART-received M5StickV frame
+// would — see camera_link.h's setExternalFrame() doc comment.
 //
 // Exists for external callers with an arbitrary-size/format photo — not
 // already resized/dithered into Printer::kPrintWidthDots-wide 1bpp the

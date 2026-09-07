@@ -346,6 +346,24 @@ Status status() {
     return s;
 }
 
+void setExternalFrame(const uint8_t *bitmap, uint16_t height, const String &label) {
+    uint16_t clampedHeight = (height > kMaxHeightDots) ? kMaxHeightDots : height;
+    memcpy(frameBuffer, bitmap, (size_t)Printer::kPrintWidthBytes * clampedHeight);
+    frameHeight = clampedHeight;
+
+    size_t labelLen = label.length();
+    if (labelLen > kMaxLabelLen) labelLen = kMaxLabelLen;
+    memcpy(frameLabel, label.c_str(), labelLen);
+    frameLabel[labelLen] = '\0';
+
+    frameReady = true;
+    pendingPrint = false;  // already printed by the caller before this is called
+    frameSeq++;
+    Serial.printf("[camera_link] external frame set: %ux%u label=\"%s\"\n", Printer::kPrintWidthDots, frameHeight,
+                  frameLabel);
+    Led::setCameraPending(false);
+}
+
 bool printLastFrame() {
     if (!frameReady) return false;
     printStoredFrame();

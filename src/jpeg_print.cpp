@@ -24,6 +24,16 @@ namespace {
 // project's existing per-module pattern.
 constexpr uint16_t kMaxHeightDots = 2000;
 
+// Mirrors CameraLink's own internal height cap (see camera_link.cpp's
+// kMaxHeightDots) — this project's established per-module-copy pattern
+// for a shared constant rather than exporting it (matching kMaxHeightDots
+// just above). Bounds how many rows of this print are also mirrored into
+// CameraLink::setExternalFrame() below, so it shows up in the
+// 「M5StickVカメラ」card — a print taller than this still prints/saves to
+// the gallery in full via the normal path, it just isn't also mirrored
+// there past this many rows.
+constexpr uint16_t kCameraLinkPreviewMaxHeightDots = 800;
+
 // Temp file for fetchAndPrint()'s downloaded JPEG — deliberately separate
 // from web_server.cpp's own kExternalPhotoTmpPath (the direct-upload
 // path's scratch file) even though the two are never in flight at the
@@ -71,6 +81,16 @@ uint8_t *gBandBuf = nullptr;
 uint32_t gNextOutputRow = 0;
 uint16_t gGalleryId = 0;
 Dither::RowDitherer gDitherer;
+
+// Accumulates a copy of the first kCameraLinkPreviewMaxHeightDots dithered
+// rows of the current print job, handed to CameraLink::setExternalFrame()
+// once printing succeeds (see printFromFile()) — nullptr whenever no job
+// is in flight (also the signal to skip the mirroring in
+// flushAvailableRows() below, e.g. if the allocation itself failed; that's
+// treated as non-fatal, this mirroring is a nice-to-have on top of the
+// actual print/gallery-save, not required for either to succeed).
+uint8_t *gCamLinkBuf = nullptr;
+uint16_t gCamLinkHeight = 0;
 
 // The same 「デフォルト: 明るさ・コントラスト」values M5StickV frames and
 // (client-side, via data/index.html's toGrayscale()) uploaded photos are
@@ -137,6 +157,9 @@ void flushAvailableRows() {
         if (gGalleryId != 0 && !Gallery::feedSave(packed, sizeof(packed))) {
             Gallery::cancelSave();
             gGalleryId = 0;
+        }
+        if (gCamLinkBuf && gNextOutputRow < gCamLinkHeight) {
+            memcpy(gCamLinkBuf + (size_t)gNextOutputRow * Printer::kPrintWidthBytes, packed, sizeof(packed));
         }
         gNextOutputRow++;
     }
@@ -208,6 +231,12 @@ bool printFromFile(const String &path, const String &label, const String &locati
     gNextOutputRow = 0;
     gDitherer.reset();
 
+    // See gCamLinkBuf's doc comment — failure here just skips the
+    // 「M5StickVカメラ」card mirroring, not the print/gallery-save itself.
+    gCamLinkHeight = (gTargetH > kCameraLinkPreviewMaxHeightDots) ? kCameraLinkPreviewMaxHeightDots : gTargetH;
+    gCamLinkBuf = (uint8_t *)malloc((size_t)Printer::kPrintWidthBytes * gCamLinkHeight);
+    if (!gCamLinkBuf) Serial.println("[jpeg_print] out of memory mirroring into CameraLink — printing anyway");
+
     bool synced = Clock::isSynced();
     String caption;
     if (label.length() > 0) caption += label;
@@ -234,6 +263,8 @@ bool printFromFile(const String &path, const String &label, const String &locati
     if (decodeResult != JDR_OK) {
         Printer::endRaster();  // close out the raster job cleanly even though it's incomplete
         if (gGalleryId != 0) Gallery::cancelSave();
+        free(gCamLinkBuf);
+        gCamLinkBuf = nullptr;
         error = "JPEG decode failed";
         return false;
     }
@@ -247,6 +278,11 @@ bool printFromFile(const String &path, const String &label, const String &locati
     if (gGalleryId != 0) {
         Gallery::endSave();
         Led::notifyNewImage();
+    }
+    if (gCamLinkBuf) {
+        CameraLink::setExternalFrame(gCamLinkBuf, gCamLinkHeight, label);
+        free(gCamLinkBuf);
+        gCamLinkBuf = nullptr;
     }
     return true;
 }
