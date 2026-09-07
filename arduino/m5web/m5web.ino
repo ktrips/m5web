@@ -20,6 +20,7 @@
 #include <Arduino.h>
 #include <esp32-hal-bt.h>
 
+#include "cams3_remote.h"
 #include "camera_link.h"
 #include "gallery.h"
 #include "haiku.h"
@@ -30,11 +31,19 @@
 #include "wifi_manager.h"
 
 // ATOM Lite's builtin button (G39, active LOW).
+//   single short press -> ask CamS3 (see cams3_remote.h, 「CamS3リモート
+//     シャッター」設定カード) to take a photo — the same "shutter" action
+//     its own web UIの撮影ボタン triggers, regardless of which of CamS3's
+//     two modes is active. CamS3-only; there's no equivalent trigger for
+//     the UART-linked M5StickV, which decides on its own when to capture.
 //   double-click (two short presses within kDoubleTapWindowMs of each
-//     other) -> reprint the last M5StickV camera frame, if any. A single
-//     short press alone does nothing — requiring the double-click is
-//     deliberate, so a stray bump of the button (it's small and exposed)
-//     can't fire off a print by itself.
+//     other) -> "print": reprints the last M5StickV camera frame (if any)
+//     *and* asks CamS3 to reprint its own newest gallery entry (if any —
+//     silently skipped when CamS3 has none, e.g. in via-ATOM mode). A
+//     single short press alone never prints — requiring the double-click
+//     for *printing* is deliberate, so a stray bump of the button (it's
+//     small and exposed) can't fire off a print by itself; a stray single
+//     click at worst takes an unwanted photo, comparatively harmless.
 //   held past kResetHoldMs -> forget saved WiFi credentials and drop back
 //     into AP setup mode
 //
@@ -49,10 +58,19 @@ constexpr unsigned long kDoubleTapWindowMs = 400;
 unsigned long buttonDownSinceMs = 0;
 // 0 = no short-click awaiting a possible second one; otherwise the
 // millis() of a short-press release still waiting to see whether a second
-// one follows within kDoubleTapWindowMs (which fires the print). A lone
-// click that never gets a follow-up simply expires unused — no action is
-// taken for it.
+// one follows within kDoubleTapWindowMs (which fires the print instead).
+// If that window passes with no second click, it resolves as a single
+// click — see checkButton()'s bottom half — and triggers CamS3's shutter.
 unsigned long pendingClickMs = 0;
+
+void triggerCamS3Shutter() {
+    Serial.println("[button] single-click: triggering CamS3 shutter");
+    if (CamS3Remote::triggerShutter()) {
+        Led::notifyShutterOk();
+    } else {
+        Serial.println("[button] CamS3 shutter trigger failed (unreachable / not configured?)");
+    }
+}
 
 void checkButton() {
     bool pressed = digitalRead(kButtonPin) == LOW;
@@ -68,8 +86,9 @@ void checkButton() {
             unsigned long now = millis();
             if (pendingClickMs != 0 && (now - pendingClickMs) <= kDoubleTapWindowMs) {
                 pendingClickMs = 0;
-                Serial.println("[button] double-click: reprinting last camera frame");
-                if (CameraLink::printLastFrame()) {
+                Serial.println("[button] double-click: printing");
+                bool camS3Reprinted = CamS3Remote::reprintLatest();  // no-op/false if CamS3 has no gallery (e.g. via-ATOM mode) — not an error
+                if (CameraLink::printLastFrame() || camS3Reprinted) {
                     Led::notifyPrintDone();
                 } else {
                     Serial.println("[button] no camera frame to print yet");
@@ -78,6 +97,13 @@ void checkButton() {
                 pendingClickMs = now;
             }
         }
+    }
+
+    // A pending single click only fires once the double-tap window has
+    // passed without a second press — see pendingClickMs's doc comment.
+    if (pendingClickMs != 0 && millis() - pendingClickMs > kDoubleTapWindowMs) {
+        pendingClickMs = 0;
+        triggerCamS3Shutter();
     }
 }
 
@@ -133,6 +159,7 @@ void setup() {
     Gallery::begin();  // reports pre-existing saved photos to Led on begin()
     CameraLink::begin();
     OpenAI::begin();
+    CamS3Remote::begin();
     WifiManager::begin();
     WebServer_::begin();
     Serial.println("=== m5web ready ===");

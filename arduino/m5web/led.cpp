@@ -12,6 +12,13 @@ constexpr unsigned long kBlinkOffMs = 150;
 constexpr uint8_t kNewImageBlinkCount = 5;
 constexpr uint8_t kPrintDoneBlinkCount = 3;
 
+// notifyShutterOk()'s single blink is deliberately longer/slower than the
+// others (see kBlinkOnMs above) so a lone flash reads as "shutter" at a
+// glance, distinct from notifyPrintDone()'s brisk 3x — same green either
+// way (see setGreenLit()), just a different rhythm.
+constexpr unsigned long kShutterBlinkOnMs = 500;
+constexpr uint8_t kShutterBlinkCount = 1;
+
 bool cameraPending = false;
 bool galleryNonEmpty = false;
 bool haikuMode = true;  // true = green (俳句), false = blue (ポエム); see setModeColor()
@@ -20,6 +27,7 @@ bool blinking = false;
 bool blinkLit = false;
 uint8_t blinkHalfStepsLeft = 0;  // remaining on/off transitions after the initial on
 unsigned long blinkNextMs = 0;
+unsigned long blinkOnMs = kBlinkOnMs;  // this blink's on-duration; off-duration is always kBlinkOffMs
 // Which color the in-progress blink uses — set once when the blink starts
 // (see startBlink()) and read back each half-step by poll(). Not used
 // outside a blink; the steady state always uses setWhiteLit() instead.
@@ -58,13 +66,14 @@ void setBlinkLit(bool on) {
     }
 }
 
-void startBlink(uint8_t count, BlinkColor color) {
+void startBlink(uint8_t count, BlinkColor color, unsigned long onMs = kBlinkOnMs) {
     blinkColor = color;
+    blinkOnMs = onMs;
     blinking = true;
     blinkLit = true;
     setBlinkLit(true);
     blinkHalfStepsLeft = count * 2 - 1;  // remaining: off,on,off,on,...,off
-    blinkNextMs = millis() + kBlinkOnMs;
+    blinkNextMs = millis() + onMs;
 }
 
 }  // namespace
@@ -74,6 +83,8 @@ void begin() { setWhiteLit(false); }
 void notifyNewImage() { startBlink(kNewImageBlinkCount, BlinkColor::kModeColor); }
 
 void notifyPrintDone() { startBlink(kPrintDoneBlinkCount, BlinkColor::kGreen); }
+
+void notifyShutterOk() { startBlink(kShutterBlinkCount, BlinkColor::kGreen, kShutterBlinkOnMs); }
 
 void setCameraPending(bool pending) {
     cameraPending = pending;
@@ -102,7 +113,7 @@ void poll() {
         applyBaseState();
         return;
     }
-    blinkNextMs = millis() + (blinkLit ? kBlinkOnMs : kBlinkOffMs);
+    blinkNextMs = millis() + (blinkLit ? blinkOnMs : kBlinkOffMs);
 }
 
 }  // namespace Led

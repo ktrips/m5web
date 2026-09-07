@@ -393,6 +393,30 @@
       <button class="primary full" id="openaiSaveBtn" style="margin-top:12px">保存</button>
       <div class="msg" id="openaiMsg"></div>
     </div>
+
+    <div class="card">
+      <h2>プリンター接続設定</h2>
+      <p class="meta">サーマルプリンターと接続しているUARTのピン番号です。ATOM Liteの標準配線は
+      TX=G23 / RX=G33（デフォルト）。CamS3など別の基板に直結する場合はここで変更してください。
+      保存すると即座に再接続します。</p>
+      <label>TXピン（プリンターのRXへ）</label>
+      <input type="text" inputmode="numeric" id="printerTxPin" placeholder="23">
+      <label>RXピン（プリンターのTXへ）</label>
+      <input type="text" inputmode="numeric" id="printerRxPin" placeholder="33">
+      <button class="primary full" id="printerPinsSaveBtn" style="margin-top:12px">保存</button>
+      <div class="msg" id="printerPinsMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>CamS3リモートシャッター</h2>
+      <p class="meta">ATOM Lite本体のボタンをシングルクリックすると、ここに設定したCamS3へ
+      撮影を指示します（ダブルクリックはM5StickV・CamS3どちらの写真も印刷、詳細はREADME参照）。
+      CamS3が直接接続モードでもATOM経由モードでも同じボタン操作で使えます。</p>
+      <label>CamS3のホスト名</label>
+      <input type="text" id="cams3Host" placeholder="m5cam.local">
+      <button class="primary full" id="cams3HostSaveBtn" style="margin-top:12px">保存</button>
+      <div class="msg" id="cams3HostMsg"></div>
+    </div>
   </div>
 
   <footer>m5web · M5Stack ATOM Printer</footer>
@@ -1926,6 +1950,90 @@ $("openaiSaveBtn").addEventListener("click", async () => {
 
 refreshOpenAIStatus();
 setInterval(refreshOpenAIStatus, 5000);
+
+// ---------- printer UART pin settings ----------
+
+let printerPinsLoaded = false;
+
+async function refreshPrinterPins() {
+  if (printerPinsLoaded) return; // only prefill once; don't clobber in-progress edits
+  try {
+    const r = await fetch("/api/printer/settings");
+    const s = await r.json();
+    printerPinsLoaded = true;
+    $("printerTxPin").value = s.txPin;
+    $("printerRxPin").value = s.rxPin;
+  } catch (e) {
+    // transient network error; leave the fields as-is and try again next poll
+  }
+}
+
+$("printerPinsSaveBtn").addEventListener("click", async () => {
+  const msg = $("printerPinsMsg");
+  const txPin = $("printerTxPin").value.trim();
+  const rxPin = $("printerRxPin").value.trim();
+  if (txPin === "" || rxPin === "") {
+    showMsg(msg, "TX/RX両方のピン番号を入力してください", "err");
+    return;
+  }
+  const btn = $("printerPinsSaveBtn");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/printer/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "txPin=" + encodeURIComponent(txPin) + "&rxPin=" + encodeURIComponent(rxPin),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    showMsg(msg, "保存しました。再接続しました", "ok");
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+refreshPrinterPins();
+setInterval(refreshPrinterPins, 4000);
+
+// ---------- CamS3 remote-shutter host ----------
+
+let cams3HostLoaded = false;
+
+async function refreshCamS3Host() {
+  if (cams3HostLoaded) return; // only prefill once; don't clobber in-progress edits
+  try {
+    const r = await fetch("/api/cams3/settings");
+    const s = await r.json();
+    cams3HostLoaded = true;
+    $("cams3Host").value = s.host;
+  } catch (e) {
+    // transient network error; leave the field as-is and try again next poll
+  }
+}
+
+$("cams3HostSaveBtn").addEventListener("click", async () => {
+  const msg = $("cams3HostMsg");
+  const host = $("cams3Host").value.trim();
+  const btn = $("cams3HostSaveBtn");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/cams3/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "host=" + encodeURIComponent(host),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    showMsg(msg, "保存しました", "ok");
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+refreshCamS3Host();
+setInterval(refreshCamS3Host, 4000);
 
 // ---------- haiku settings (poem type, author) ----------
 

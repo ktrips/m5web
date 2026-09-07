@@ -1,14 +1,21 @@
-// camS3.ino — M5Stack Unit CamS3-5MP wireless shutter for m5web.
+// camS3.ino — M5Stack Unit CamS3-5MP standalone web camera/printer
+// ("m5cam.local"), with two switchable modes (see printer_mode.h, and the
+// 「接続方式」card on either web UI below):
 //
-// Captures a JPEG photo with the CamS3's onboard camera and sends it to the
-// ATOM Lite (m5web) over WiFi to be dithered and printed — no ATOM Lite
-// firmware changes needed. This is purely a new HTTP client of the
-// already-existing `/api/print/photo` endpoint (multipart JPEG upload; see
-// ../../src/jpeg_print.* and README.md's
-// 「外部プログラムからの写真送信（/api/print/photo）」section), the same way
-// arduino/m5paper/m5paper.ino is a new client of `/api/gallery*` — no
-// UART link like the M5StickV (../../src/camera_link.*) is needed here
-// since the CamS3, like the M5PaperColor, has its own WiFi radio.
+//   ATOM経由 (kViaAtom, the default — original camS3.ino behavior, no
+//   config needed): CamS3 is just a camera. A capture is POSTed straight
+//   to an ATOM Lite running m5web's `/api/print/photo` (multipart JPEG
+//   upload; see ../../src/jpeg_print.* and README.md's
+//   「外部プログラムからの写真送信（/api/print/photo）」section) — no ATOM
+//   Lite firmware changes needed. All printing/gallery/settings live on
+//   m5web.local; this device's own page is a small status/shutter/mode
+//   card (see web_server.cpp's kLightPage), no filesystem needed at all.
+//
+//   直接接続 (kDirect): a thermal printer is wired straight to this board
+//   (see printer.h's configurable TX/RX pins) and CamS3 runs the same
+//   menu m5web does — gallery, text/QR/haiku printing, Wi-Fi, OpenAI —
+//   served from data/index.html on Storage::fs() (flash or SD, see
+//   storage.h). See own_camera.h for the capture->print pipeline.
 //
 // Target hardware: M5Stack Unit CamS3-5MP (ESP32-S3-WROOM-1-N16R8,
 // PY260/OV2640 5MP sensor depending on hardware revision — see M5Stack's
@@ -19,11 +26,14 @@
 //       GND, matching M5Stack's own example wiring) — read as
 //       INPUT_PULLUP and debounced in loop().
 //   (2) HTTP GET to this device's own `/shutter` endpoint (e.g.
-//       `curl http://cams3.local/shutter` from a phone/script/automation),
+//       `curl http://m5cam.local/shutter` from a phone/script/automation),
 //       for a no-extra-hardware remote trigger.
-// The onboard LED (GPIO14, a plain fill-light LED, not an addressable
-// RGB one) blinks slowly while waiting for WiFi setup, and flashes once
-// around each capture as a shutter indicator — see setLed()/blinkLed().
+// The onboard LED (GPIO14, a plain single-color fill-light LED, not an
+// addressable RGB one — no white/green color-coding is physically
+// possible here) blinks slowly while waiting for WiFi setup; during a
+// capture it's held solid on for the whole capture+print/forward, then
+// blinks once on success or 3x on failure once it's done — see
+// handleTrigger()/handleCaptureRequest()'s setLed()/blinkLed() calls.
 //
 // Arduino IDE setup:
 //   - Board: "M5UnitCAMS3" if your board package provides it, otherwise a
@@ -34,9 +44,18 @@
 //     without it, see initCamera()'s error logging).
 //   - arduino-esp32 core v3.3.0 or later (older versions may not recognize
 //     this sensor / the pin_sccb_* config field names used below).
-//   - No extra libraries to install: the esp32-camera driver
-//     (`esp_camera.h`) ships inside the ESP32 Arduino core itself, and
-//     WiFi/HTTPClient/WebServer/DNSServer/Preferences/ESPmDNS all do too.
+//   - esp32-camera (`esp_camera.h`) and WiFi/HTTPClient/WebServer/
+//     DNSServer/Preferences/ESPmDNS/FFat/SD/SPI all ship inside the ESP32
+//     Arduino core — no extra install needed for kViaAtom mode. kDirect
+//     mode additionally needs the same **TJpg_Decoder** (Bodmer) library
+//     m5web's own JPEG-upload path uses (see jpeg_print.h) — install it
+//     from the Library Manager if you plan to use kDirect mode.
+//   - kDirect mode's page is embedded in the firmware (see data_html.h) —
+//     no separate data/ upload step needed, unlike m5web's own
+//     data/index.html (see storage.h for why: this board's realistic
+//     16MB-flash partition schemes are FAT-only, and the usual LittleFS-
+//     upload IDE plugins don't target FAT partitions). kViaAtom mode's
+//     page is embedded the same way.
 //
 // WiFi setup: no credentials are hardcoded in this file, same as
 // arduino/m5paper/m5paper.ino and src/wifi_manager.cpp. On first boot (or
@@ -68,11 +87,19 @@
 #include <Preferences.h>
 #include <ESPmDNS.h>
 
-// ---- target: the ATOM Lite running m5web ----
-// ESP32 Arduino generally resolves ".local" fine; if it doesn't on your
-// network, replace this with the ATOM's IP address instead (see m5web's
-// own README.md / `pio device monitor`).
-const char *M5WEB_HOST = "m5web.local";
+#include "default_adjust.h"
+#include "gallery.h"
+#include "own_camera.h"
+#include "printer.h"
+#include "printer_mode.h"
+#include "storage.h"
+#include "web_server.h"
+
+// ---- target: the ATOM Lite running m5web, in kViaAtom mode (see
+// printer_mode.h) — configurable from the web UI, PrinterMode::atomHost(),
+// defaulting to "m5web.local". ESP32 Arduino generally resolves ".local"
+// fine; if it doesn't on your network, set an IP address instead (see
+// m5web's own README.md / `pio device monitor`).
 constexpr uint16_t M5WEB_PORT = 80;
 
 // ---- camera pins (M5Stack Unit CamS3-5MP; see docs.m5stack.com's
@@ -120,10 +147,6 @@ Preferences wifiPrefs;
 DNSServer dnsServer;
 WebServer setupServer(80);
 String apSsid;
-
-// ---- runtime HTTP server (started once WiFi is up) — the remote-trigger
-// path described in the file header, alongside the GPIO0 button ----
-WebServer runtimeServer(80);
 
 bool ledOn = false;
 void setLed(bool on) {
@@ -194,6 +217,21 @@ bool initCamera() {
         }
     }
 
+    // Discard the first few frames after init/framesize change before
+    // trusting a capture. Confirmed on real hardware: the very first
+    // esp_camera_fb_get() right after esp_camera_init()/set_framesize()
+    // comes back solid black — the sensor's auto-exposure/auto-white-
+    // balance hasn't converged yet (and grab_mode=CAMERA_GRAB_WHEN_EMPTY
+    // can also just hand back a stale buffer from before the framesize
+    // change). A handful of warm-up captures, spaced out to give AEC/AGC
+    // real time between frames, fixes it — same fix M5Stack's own
+    // CameraWebServer example and most ESP32-camera examples apply.
+    for (int i = 0; i < 5; i++) {
+        camera_fb_t *warm = esp_camera_fb_get();
+        if (warm) esp_camera_fb_return(warm);
+        delay(150);
+    }
+
     Serial.println("[camera] initialized");
     return true;
 }
@@ -204,22 +242,16 @@ bool initCamera() {
 // buffer in between — same "write the raw bytes directly, don't copy them
 // into a second buffer first" approach m5web's own web_server.cpp uses for
 // serving frames (see its handleCameraFrame()/handleCapture()).
-bool captureAndSend(String &resultMsg) {
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (!fb) {
-        resultMsg = "capture failed (esp_camera_fb_get returned null)";
-        return false;
-    }
-    Serial.printf("[camera] captured %ux%u, %u bytes\n", fb->width, fb->height, (unsigned)fb->len);
-
-    setLed(true);  // on for the duration of the upload — doubles as a "busy" indicator
-
+// POSTs raw JPEG bytes to PrinterMode::atomHost()'s /api/print/photo as
+// a multipart upload — the primitive sendJpegFileToAtom() (below) builds
+// on to send an already-captured file (own_camera.cpp's capture/preview
+// paths — see camS3_actions.h — read the bytes off Storage::fs() first).
+bool sendJpegBytesToAtom(const uint8_t *buf, size_t len, String &resultMsg) {
+    String host = PrinterMode::atomHost();
     WiFiClient client;
-    bool ok = client.connect(M5WEB_HOST, M5WEB_PORT);
+    bool ok = client.connect(host.c_str(), M5WEB_PORT);
     if (!ok) {
-        esp_camera_fb_return(fb);
-        setLed(false);
-        resultMsg = String("connect to ") + M5WEB_HOST + " failed";
+        resultMsg = "connect to " + host + " failed";
         return false;
     }
 
@@ -228,16 +260,14 @@ bool captureAndSend(String &resultMsg) {
                   "Content-Disposition: form-data; name=\"photo\"; filename=\"camS3.jpg\"\r\n" +
                   "Content-Type: image/jpeg\r\n\r\n";
     String tail = String("\r\n--") + boundary + "--\r\n";
-    size_t contentLength = head.length() + fb->len + tail.length();
+    size_t contentLength = head.length() + len + tail.length();
 
-    client.print(String("POST /api/print/photo HTTP/1.1\r\n") + "Host: " + M5WEB_HOST + "\r\n" +
+    client.print(String("POST /api/print/photo HTTP/1.1\r\n") + "Host: " + host + "\r\n" +
                  "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n" +
                  "Content-Length: " + String(contentLength) + "\r\n" + "Connection: close\r\n\r\n");
     client.print(head);
-    client.write(fb->buf, fb->len);
+    client.write(buf, len);
     client.print(tail);
-
-    esp_camera_fb_return(fb);  // driver's buffer no longer needed once the bytes are on the wire
 
     // Read the status line (and drain the rest) with a generous timeout —
     // the ATOM Lite's own decode+dither+print can take a few seconds.
@@ -250,14 +280,12 @@ bool captureAndSend(String &resultMsg) {
         }
         if (millis() - start > 20000) {
             client.stop();
-            setLed(false);
             resultMsg = "timed out waiting for m5web's response";
             return false;
         }
         delay(10);
     }
     client.stop();
-    setLed(false);
 
     // "HTTP/1.1 200 OK" -> take the 3-digit code out of the middle.
     int code = 0;
@@ -272,39 +300,51 @@ bool captureAndSend(String &resultMsg) {
     return false;
 }
 
+// Sends an already-captured JPEG file (see own_camera.cpp's kPreview
+// mode, which decodes-and-holds a capture for confirmation before this
+// gets called) to ATOM instead of taking a fresh photo — used when the
+// 撮影方式 setting is preview and PrinterMode is kViaAtom (see
+// camS3_actions.h).
+bool sendJpegFileToAtom(const String &path, String &resultMsg) {
+    File f = Storage::fs().open(path, "r");
+    if (!f) {
+        resultMsg = "pending capture file missing";
+        return false;
+    }
+    size_t len = f.size();
+    uint8_t *buf = (uint8_t *)malloc(len);
+    if (!buf) {
+        f.close();
+        resultMsg = "out of memory reading pending capture";
+        return false;
+    }
+    f.read(buf, len);
+    f.close();
+    bool ok = sendJpegBytesToAtom(buf, len, resultMsg);
+    free(buf);
+    return ok;
+}
+
+// Mode-aware capture, shared by the GPIO0 button and web_server.cpp's
+// POST /api/camera/capture + GET /shutter (see camS3_actions.h). The
+// 撮影方式 setting (OwnCamera::mode()) decides preview-vs-immediate
+// regardless of PrinterMode; OwnCamera itself decides print-locally vs.
+// forward-to-ATOM based on PrinterMode at capture/confirm time.
 void handleTrigger(const char *source) {
     Serial.printf("[shutter] triggered via %s\n", source);
+    setLed(true);  // on for the whole capture — see file header's LED note
     String resultMsg;
-    bool ok = captureAndSend(resultMsg);
+    bool ok;
+    if (OwnCamera::mode() == OwnCamera::Mode::kPreview) {
+        ok = OwnCamera::captureForPreview(resultMsg);
+        if (ok) resultMsg = "captured — open the 撮影 card to review and print";
+    } else {
+        ok = OwnCamera::captureAndCommitNow(resultMsg);
+        if (ok) resultMsg = "printed";
+    }
+    setLed(false);
     Serial.printf("[shutter] %s: %s\n", ok ? "ok" : "FAILED", resultMsg.c_str());
     blinkLed(ok ? 1 : 3, ok ? 400 : 120, 120);
-}
-
-// ---- runtime HTTP server: the remote-trigger path (see file header) ----
-
-void handleShutterRequest() {
-    String resultMsg;
-    bool ok = captureAndSend(resultMsg);
-    Serial.printf("[shutter] (http) %s: %s\n", ok ? "ok" : "FAILED", resultMsg.c_str());
-    runtimeServer.send(ok ? 200 : 502, "text/plain", resultMsg);
-}
-
-void handleStatusRequest() {
-    String json = "{";
-    json += "\"uptimeSec\":" + String(millis() / 1000) + ",";
-    json += "\"freeHeap\":" + String(ESP.getFreeHeap()) + ",";
-    json += "\"freePsram\":" + String(ESP.getFreePsram()) + ",";
-    json += "\"wifiRssi\":" + String(WiFi.RSSI()) + ",";
-    json += "\"m5webHost\":\"" + String(M5WEB_HOST) + "\"";
-    json += "}";
-    runtimeServer.send(200, "application/json", json);
-}
-
-void startRuntimeServer() {
-    runtimeServer.on("/shutter", HTTP_GET, handleShutterRequest);
-    runtimeServer.on("/status", HTTP_GET, handleStatusRequest);
-    runtimeServer.begin();
-    Serial.println("[http] runtime server ready: GET /shutter, GET /status");
 }
 
 // ---- WiFi setup (AP mode + captive portal) ----
@@ -413,6 +453,32 @@ bool tryStationConnect(const String &ssid, const String &password, unsigned long
     return true;
 }
 
+// Reused by web_server.cpp's /api/wifi/scan + /api/wifi (runtime network
+// switch, distinct from the AP-mode captive-portal handlers above) — see
+// camS3_actions.h.
+String wifiScanJson() {
+    int n = WiFi.scanNetworks();
+    String json = "[";
+    for (int i = 0; i < n; i++) {
+        if (i > 0) json += ",";
+        json += "{\"ssid\":\"" + jsonEscape(WiFi.SSID(i)) + "\",";
+        json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+        json += "\"open\":" + String(WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "true" : "false") + "}";
+    }
+    json += "]";
+    WiFi.scanDelete();
+    return json;
+}
+
+bool wifiConnectAndSave(const String &ssid, const String &password) {
+    bool ok = tryStationConnect(ssid, password, 8000);
+    if (ok) {
+        wifiPrefs.putString("ssid", ssid);
+        wifiPrefs.putString("pass", password);
+    }
+    return ok;
+}
+
 void handleSetupConnect() {
     if (!setupServer.hasArg("ssid") || setupServer.arg("ssid").length() == 0) {
         setupServer.send(400, "text/plain", "ssid required");
@@ -509,17 +575,40 @@ void setup() {
     }
 
     ensureWifiConnected();
-    Serial.printf("[wifi] ready: ip=%s -> printing to %s\n", WiFi.localIP().toString().c_str(), M5WEB_HOST);
 
-    if (MDNS.begin("cams3")) {
-        MDNS.addService("http", "tcp", 80);
-        Serial.println("[wifi] mDNS: http://cams3.local/shutter");
+    PrinterMode::begin();  // decides which of the initialization below actually runs
+    Serial.printf("[wifi] ready: ip=%s, mode=%s\n", WiFi.localIP().toString().c_str(),
+                  PrinterMode::mode() == PrinterMode::Mode::kDirect ? "direct" : "via_atom");
+
+    // Storage/DefaultAdjust/OwnCamera are needed regardless of
+    // PrinterMode — own_camera.cpp's capture/preview path always writes
+    // its temp JPEG through Storage::fs() and always reads
+    // DefaultAdjust's brightness/contrast, even when the eventual commit
+    // is a forward to ATOM rather than a local print (see own_camera.h's
+    // doc comment). Order matters: Storage before Gallery/OwnCamera/
+    // web_server (all read/write through Storage::fs()).
+    Storage::begin();
+    DefaultAdjust::begin();
+    OwnCamera::begin();
+
+    if (PrinterMode::mode() == PrinterMode::Mode::kDirect) {
+        // Own-printer/own-gallery init — CamS3 has no printer/gallery of
+        // its own to run in kViaAtom mode (see printer_mode.h's doc
+        // comment).
+        Printer::begin();
+        Gallery::begin();
     }
 
-    startRuntimeServer();
+    WebServer_::begin();
+
+    if (MDNS.begin("m5cam")) {
+        MDNS.addService("http", "tcp", 80);
+        Serial.println("[wifi] mDNS: http://m5cam.local/");
+    }
+
     blinkLed(2, 150, 150);  // "ready" signal
 
-    Serial.println("=== camS3 ready — ground GPIO0 or GET /shutter to take a photo ===");
+    Serial.println("=== camS3 ready — open http://m5cam.local/, ground GPIO0, or GET /shutter to take a photo ===");
 }
 
 bool lastTriggerState = HIGH;
@@ -547,7 +636,7 @@ void printHeartbeat() {
 }
 
 void loop() {
-    runtimeServer.handleClient();
+    WebServer_::loop();
     checkButtonTrigger();
     printHeartbeat();
 }

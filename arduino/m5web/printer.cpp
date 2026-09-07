@@ -1,13 +1,16 @@
 #include "printer.h"
 
+#include <Preferences.h>
+
 namespace Printer {
 
 namespace {
-constexpr uint8_t kRxPin = 33;
-constexpr uint8_t kTxPin = 23;
 constexpr uint32_t kBaud = 9600;
 
 HardwareSerial &port = Serial2;
+Preferences prefs;
+uint8_t txPin = kDefaultTxPin;
+uint8_t rxPin = kDefaultRxPin;
 
 uint16_t rasterHeightDots = 0;
 size_t rasterBytesExpected = 0;
@@ -15,7 +18,27 @@ size_t rasterBytesSent = 0;
 }  // namespace
 
 void begin() {
-    port.begin(kBaud, SERIAL_8N1, kRxPin, kTxPin);
+    prefs.begin("m5web_printer", false);
+    txPin = (uint8_t)prefs.getUChar("txPin", kDefaultTxPin);
+    rxPin = (uint8_t)prefs.getUChar("rxPin", kDefaultRxPin);
+    port.begin(kBaud, SERIAL_8N1, rxPin, txPin);
+}
+
+bool setPins(uint8_t newTxPin, uint8_t newRxPin) {
+    if (newTxPin == newRxPin) return false;
+    txPin = newTxPin;
+    rxPin = newRxPin;
+    port.end();
+    port.begin(kBaud, SERIAL_8N1, rxPin, txPin);
+    prefs.putUChar("txPin", txPin);
+    prefs.putUChar("rxPin", rxPin);
+    Serial.printf("[printer] pins changed: tx=%u rx=%u\n", txPin, rxPin);
+    return true;
+}
+
+void currentPins(uint8_t &txPinOut, uint8_t &rxPinOut) {
+    txPinOut = txPin;
+    rxPinOut = rxPin;
 }
 
 void reset() {

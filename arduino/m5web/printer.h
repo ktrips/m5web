@@ -3,9 +3,9 @@
 #include <Arduino.h>
 
 // Driver for the 58mm thermal printer bundled with the M5Stack ATOM Printer
-// Kit. Talks ESC/POS-compatible commands over UART2 (9600 8N1, TX=G23,
-// RX=G33 on ATOM Lite) as documented at
-// https://docs.m5stack.com/en/atom/atom_printer
+// Kit. Talks ESC/POS-compatible commands over UART2 (9600 8N1, default
+// TX=G23, RX=G33 on ATOM Lite — see kDefaultTxPin/kDefaultRxPin below) as
+// documented at https://docs.m5stack.com/en/atom/atom_printer
 //
 // Printer resolution is fixed: 203dpi / 8 dots-per-mm, 384 dots per line
 // (58mm head). kPrintWidthDots is that hard limit — raster images must be
@@ -15,7 +15,23 @@ namespace Printer {
 constexpr uint16_t kPrintWidthDots = 384;      // fixed by the print head
 constexpr uint16_t kPrintWidthBytes = kPrintWidthDots / 8;  // 48
 
+// Defaults match the ATOM Printer Kit's stock wiring (see file header).
+// CamS3's GPIO map differs from the ATOM Lite's — see the 設定 tab's
+// 「プリンター接続設定」card / /api/printer/settings to change these
+// without reflashing, e.g. when wiring a printer directly to CamS3.
+constexpr uint8_t kDefaultTxPin = 23;
+constexpr uint8_t kDefaultRxPin = 33;
+
+// Loads the saved TX/RX pins from NVS (falling back to
+// kDefaultTxPin/kDefaultRxPin if never set) and opens the UART.
 void begin();
+
+// Re-opens the UART on new pins and persists them to NVS, so the change
+// survives a reboot. Returns false (no-op, previous pins kept) if txPin
+// == rxPin, since that's never a valid wiring.
+bool setPins(uint8_t txPin, uint8_t rxPin);
+
+void currentPins(uint8_t &txPin, uint8_t &rxPin);
 
 // ESC @ : resets the printer's line/format state. Call before each job.
 void reset();

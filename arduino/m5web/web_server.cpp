@@ -4,6 +4,7 @@
 #include <Preferences.h>
 #include <WebServer.h>
 
+#include "cams3_remote.h"
 #include "camera_link.h"
 #include "caption.h"
 #include "clock.h"
@@ -185,13 +186,9 @@ void handlePrintQr() {
         sendPlain(400, "url too long (max " + String(kMaxQrLength) + " chars)");
         return;
     }
-    bool showUrl = server.hasArg("showUrl") && server.arg("showUrl") == "1";
-    Serial.printf("[web] print QR: %s%s\n", data.c_str(), showUrl ? " (+URL)" : "");
+    Serial.printf("[web] print QR: %s\n", data.c_str());
     Printer::reset();
     Printer::printQRCode(data);
-    if (showUrl) {
-        Printer::printText(data);
-    }
     sendPlain(200, "OK");
 }
 
@@ -635,6 +632,45 @@ void handleForwardSettingsSet() {
     sendPlain(200, "OK");
 }
 
+// GPIO numbers only — an ESP32-family chip's usable range never exceeds
+// this, and it's a cheap sanity check before handing the value to
+// HardwareSerial::begin() (an out-of-range pin there just silently fails
+// to talk to the printer, which is much harder to debug than a 400 here).
+constexpr uint8_t kMaxGpioNum = 48;
+
+void handlePrinterSettingsGet() {
+    uint8_t tx = 0, rx = 0;
+    Printer::currentPins(tx, rx);
+    server.send(200, "application/json", "{\"txPin\":" + String(tx) + ",\"rxPin\":" + String(rx) + "}");
+}
+
+void handlePrinterSettingsSet() {
+    if (!server.hasArg("txPin") || !server.hasArg("rxPin")) {
+        sendPlain(400, "txPin and rxPin required");
+        return;
+    }
+    int tx = server.arg("txPin").toInt();
+    int rx = server.arg("rxPin").toInt();
+    if (tx < 0 || tx > kMaxGpioNum || rx < 0 || rx > kMaxGpioNum) {
+        sendPlain(400, "txPin/rxPin must be 0-" + String(kMaxGpioNum));
+        return;
+    }
+    if (!Printer::setPins((uint8_t)tx, (uint8_t)rx)) {
+        sendPlain(400, "txPin and rxPin must differ");
+        return;
+    }
+    sendPlain(200, "OK");
+}
+
+void handleCamS3SettingsGet() {
+    server.send(200, "application/json", "{\"host\":\"" + jsonEscape(CamS3Remote::host().c_str()) + "\"}");
+}
+
+void handleCamS3SettingsSet() {
+    if (server.hasArg("host")) CamS3Remote::setHost(server.arg("host"));
+    sendPlain(200, "OK");
+}
+
 }  // namespace
 
 void begin() {
@@ -686,6 +722,10 @@ void begin() {
     server.on("/api/qrwatermark/settings", HTTP_POST, handleQrWatermarkSettingsSet);
     server.on("/api/forward/settings", HTTP_GET, handleForwardSettingsGet);
     server.on("/api/forward/settings", HTTP_POST, handleForwardSettingsSet);
+    server.on("/api/printer/settings", HTTP_GET, handlePrinterSettingsGet);
+    server.on("/api/printer/settings", HTTP_POST, handlePrinterSettingsSet);
+    server.on("/api/cams3/settings", HTTP_GET, handleCamS3SettingsGet);
+    server.on("/api/cams3/settings", HTTP_POST, handleCamS3SettingsSet);
 
     server.begin();
 }
