@@ -64,11 +64,14 @@ bool printPreviewBuf() {
 // Captures one JPEG frame into kCaptureTmpPath. Returns false with
 // `error` set on failure; the caller owns deleting the file afterward.
 bool captureToTmpFile(String &error) {
+    Serial.println("[own_camera] captureToTmpFile: calling esp_camera_fb_get()...");
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) {
         error = "capture failed (esp_camera_fb_get returned null) — check camera init log";
         return false;
     }
+    Serial.printf("[own_camera] captureToTmpFile: got frame %ux%u, %u bytes\n", fb->width, fb->height,
+                  (unsigned)fb->len);
 
     File f = Storage::fs().open(kCaptureTmpPath, "w");
     if (!f) {
@@ -76,10 +79,12 @@ bool captureToTmpFile(String &error) {
         error = "could not open temp file (storage full?)";
         return false;
     }
+    Serial.println("[own_camera] captureToTmpFile: writing to storage...");
     size_t written = f.write(fb->buf, fb->len);
     f.close();
     size_t fbLen = fb->len;
     esp_camera_fb_return(fb);
+    Serial.printf("[own_camera] captureToTmpFile: wrote %u/%u bytes\n", (unsigned)written, (unsigned)fbLen);
 
     if (written != fbLen) {
         Storage::fs().remove(kCaptureTmpPath);
@@ -120,11 +125,13 @@ bool captureAndCommitNow(String &error) {
 bool captureForPreview(String &error) {
     if (!captureToTmpFile(error)) return false;
 
+    Serial.println("[own_camera] captureForPreview: decoding to preview buffer...");
     uint16_t decodedHeight = 0;
     if (!JpegPrint::decodeToBuffer(kCaptureTmpPath, previewBuf, decodedHeight, error)) {
         Storage::fs().remove(kCaptureTmpPath);
         return false;
     }
+    Serial.println("[own_camera] captureForPreview: decode done");
 
     // kCaptureTmpPath deliberately NOT removed here — confirmPrint() needs
     // it if PrinterMode is kViaAtom (see below); discardPending()/the next

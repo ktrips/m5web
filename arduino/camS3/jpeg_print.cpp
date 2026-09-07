@@ -250,11 +250,13 @@ bool printFromFile(const String &path, const String &label, const String &locati
 }
 
 bool decodeToBuffer(const String &path, uint8_t *outBuf, uint16_t &outHeight, String &error) {
+    Serial.println("[jpeg_print] decodeToBuffer: getFsJpgSize...");
     uint16_t origW = 0, origH = 0;
     if (TJpgDec.getFsJpgSize(&origW, &origH, path, Storage::fs()) != JDR_OK || origW == 0 || origH == 0) {
         error = "not a valid JPEG";
         return false;
     }
+    Serial.printf("[jpeg_print] decodeToBuffer: size=%ux%u\n", origW, origH);
 
     gBrightness = DefaultAdjust::brightness();
     gContrast = DefaultAdjust::contrast();
@@ -286,7 +288,9 @@ bool decodeToBuffer(const String &path, uint8_t *outBuf, uint16_t &outHeight, St
     gOutBuf = outBuf;
     gOutBufCapHeight = kPreviewMaxHeightDots;
 
+    Serial.println("[jpeg_print] decodeToBuffer: drawFsJpg...");
     JRESULT decodeResult = TJpgDec.drawFsJpg(0, 0, path, Storage::fs());
+    Serial.printf("[jpeg_print] decodeToBuffer: drawFsJpg returned %d\n", (int)decodeResult);
     if (decodeResult == JDR_OK) flushAvailableRows();
 
     free(gBandBuf);

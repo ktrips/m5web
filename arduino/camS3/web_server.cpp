@@ -437,16 +437,20 @@ void handleModeSet() {
 }
 
 void handleCaptureRequest() {
+    Serial.println("[web] /api/camera/capture (or /shutter) request received");
     setLed(true);  // on for the whole capture+print/forward — see camS3.ino's file header LED note
     String resultMsg;
     bool ok;
     if (OwnCamera::mode() == OwnCamera::Mode::kPreview) {
+        Serial.println("[web] dispatching: captureForPreview");
         ok = OwnCamera::captureForPreview(resultMsg);
         if (ok) resultMsg = "captured — open the 撮影 card to review and print";
     } else {
+        Serial.println("[web] dispatching: captureAndCommitNow");
         ok = OwnCamera::captureAndCommitNow(resultMsg);
         if (ok) resultMsg = "printed";
     }
+    Serial.printf("[web] capture dispatch returned ok=%d msg=%s\n", ok, resultMsg.c_str());
     setLed(false);
     blinkLed(ok ? 1 : 3, ok ? 400 : 120, 120);  // same pattern as camS3.ino's original handleTrigger()
     server.send(ok ? 200 : 502, "text/plain", resultMsg);
