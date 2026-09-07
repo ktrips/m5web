@@ -69,7 +69,9 @@ void checkButton() {
             if (pendingClickMs != 0 && (now - pendingClickMs) <= kDoubleTapWindowMs) {
                 pendingClickMs = 0;
                 Serial.println("[button] double-click: reprinting last camera frame");
-                if (!CameraLink::printLastFrame()) {
+                if (CameraLink::printLastFrame()) {
+                    Led::notifyPrintDone();
+                } else {
                     Serial.println("[button] no camera frame to print yet");
                 }
             } else {

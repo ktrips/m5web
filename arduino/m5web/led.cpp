@@ -9,7 +9,8 @@ constexpr uint8_t kBrightness = 40;  // dim — this is a status light, not a fl
 
 constexpr unsigned long kBlinkOnMs = 150;
 constexpr unsigned long kBlinkOffMs = 150;
-constexpr uint8_t kBlinkCount = 5;
+constexpr uint8_t kNewImageBlinkCount = 5;
+constexpr uint8_t kPrintDoneBlinkCount = 3;
 
 bool cameraPending = false;
 bool galleryNonEmpty = false;
@@ -19,11 +20,16 @@ bool blinking = false;
 bool blinkLit = false;
 uint8_t blinkHalfStepsLeft = 0;  // remaining on/off transitions after the initial on
 unsigned long blinkNextMs = 0;
+// Which color the in-progress blink uses — set once when the blink starts
+// (see startBlink()) and read back each half-step by poll(). Not used
+// outside a blink; the steady state always uses setWhiteLit() instead.
+enum class BlinkColor { kModeColor, kGreen };
+BlinkColor blinkColor = BlinkColor::kModeColor;
 
 // Lights the LED in the current mode color (green/blue), or off — never
 // both channels at once, so the color always unambiguously reads as one
-// mode or the other. Used only for the brief notifyNewImage() blink; the
-// steady "something is printable" state uses setWhiteLit() instead (see
+// mode or the other. Used only for the notifyNewImage() blink; the steady
+// "something is printable" state uses setWhiteLit() instead (see
 // applyBaseState()) so it reads as a distinct, unambiguous "ready" signal
 // regardless of poem mode.
 void setModeColorLit(bool on) {
@@ -34,21 +40,40 @@ void setModeColorLit(bool on) {
     }
 }
 
+// Fixed green regardless of poem mode — used for notifyPrintDone(), so a
+// completed print reads the same way whether in 俳句 or ポエム mode
+// (unlike notifyNewImage()'s mode-colored blink, which is deliberately
+// mode-dependent).
+void setGreenLit(bool on) { neopixelWrite(kPin, 0, on ? kBrightness : 0, 0); }
+
 void setWhiteLit(bool on) { neopixelWrite(kPin, on ? kBrightness : 0, on ? kBrightness : 0, on ? kBrightness : 0); }
 
 void applyBaseState() { setWhiteLit(cameraPending || galleryNonEmpty); }
+
+void setBlinkLit(bool on) {
+    if (blinkColor == BlinkColor::kGreen) {
+        setGreenLit(on);
+    } else {
+        setModeColorLit(on);
+    }
+}
+
+void startBlink(uint8_t count, BlinkColor color) {
+    blinkColor = color;
+    blinking = true;
+    blinkLit = true;
+    setBlinkLit(true);
+    blinkHalfStepsLeft = count * 2 - 1;  // remaining: off,on,off,on,...,off
+    blinkNextMs = millis() + kBlinkOnMs;
+}
 
 }  // namespace
 
 void begin() { setWhiteLit(false); }
 
-void notifyNewImage() {
-    blinking = true;
-    blinkLit = true;
-    setModeColorLit(true);
-    blinkHalfStepsLeft = kBlinkCount * 2 - 1;  // remaining: off,on,off,on,off
-    blinkNextMs = millis() + kBlinkOnMs;
-}
+void notifyNewImage() { startBlink(kNewImageBlinkCount, BlinkColor::kModeColor); }
+
+void notifyPrintDone() { startBlink(kPrintDoneBlinkCount, BlinkColor::kGreen); }
 
 void setCameraPending(bool pending) {
     cameraPending = pending;
@@ -70,7 +95,7 @@ void poll() {
     if ((long)(millis() - blinkNextMs) < 0) return;
 
     blinkLit = !blinkLit;
-    setModeColorLit(blinkLit);
+    setBlinkLit(blinkLit);
     blinkHalfStepsLeft--;
     if (blinkHalfStepsLeft == 0) {
         blinking = false;
