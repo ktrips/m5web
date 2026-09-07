@@ -45,20 +45,21 @@
 // phone to that AP, pick/enter the real network and password there, and
 // it's saved to NVS (Preferences) for future boots.
 //
-// UNTESTED ON REAL HARDWARE: written against M5Stack's own documented
-// Unit CamS3-5MP pin table and example (docs.m5stack.com's web_cam guide)
-// but not verified against actual hardware. Likely spots to double-check:
-//   - Pin assignments below (XCLK/SIOD/SIOC/Y2-Y9/VSYNC/HREF/PCLK/RESET/
-//     LED) — sourced from the official docs table; if the camera fails to
-//     init (see initCamera()'s Serial output for the exact esp_err_t), a
-//     pin mismatch is the first thing to check.
+// Pin table confirmed against M5Stack's own official CameraWebServer
+// example (CAMERA_MODEL_M5STACK_CAMS3_UNIT in their board_config.h) —
+// matches exactly. WiFi onboarding, /shutter, /status, and the LED all
+// confirmed working on real hardware too. The one real-hardware finding:
+// esp_camera_init() must NOT be called with a small frame_size (e.g.
+// SVGA) directly on this sensor/driver combo — it fails with esp_err_t
+// 0x20002 (ESP_ERR_CAMERA_FAILED_TO_SET_FRAME_SIZE). Fixed by
+// initializing at FRAMESIZE_UXGA (matching the official example's own
+// PSRAM-present default) and downsizing to kFrameSize via a runtime
+// set_framesize() call right after — see initCamera().
 //   - Sensor identity: M5Stack shipped this unit with different sensors
 //     across hardware revisions (OV2640, then PY260) — the esp32-camera
 //     driver auto-detects via SCCB probe, so no sensor-specific code
 //     should be needed, but very old core versions may not recognize a
 //     newer sensor's ID.
-//   - kFrameSize below defaults to SVGA (800x600) rather than this unit's
-//     full 5MP — see that constant's comment for why.
 
 #include "esp_camera.h"
 #include <WiFi.h>
@@ -163,7 +164,17 @@ bool initCamera() {
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 20000000;
     config.pixel_format = PIXFORMAT_JPEG;
-    config.frame_size = kFrameSize;
+    // Init at UXGA (the sensor's own default/safe size), not kFrameSize
+    // directly — M5Stack's own CameraWebServer example for this exact
+    // board does the same (see its board_config.h /
+    // CAMERA_MODEL_M5STACK_CAMS3_UNIT setup) and it matters: initializing
+    // esp_camera_init() straight at a smaller size like SVGA fails on
+    // this sensor/driver combo with esp_err_t 0x20002
+    // (ESP_ERR_CAMERA_FAILED_TO_SET_FRAME_SIZE), confirmed on real
+    // hardware. Downsizing to kFrameSize is instead done via a runtime
+    // set_framesize() call right after init below, which is the path
+    // that actually works.
+    config.frame_size = FRAMESIZE_UXGA;
     config.jpeg_quality = kJpegQuality;
     config.fb_count = 2;  // needs PSRAM (see file header) — lets the driver start filling the next frame while we send the last one
     config.fb_location = CAMERA_FB_IN_PSRAM;
@@ -174,6 +185,15 @@ bool initCamera() {
         Serial.printf("[camera] esp_camera_init failed: 0x%x\n", err);
         return false;
     }
+
+    sensor_t *sensor = esp_camera_sensor_get();
+    if (sensor) {
+        err = sensor->set_framesize(sensor, kFrameSize);
+        if (err != 0) {
+            Serial.printf("[camera] set_framesize(kFrameSize) failed: %d — capturing at UXGA instead\n", err);
+        }
+    }
+
     Serial.println("[camera] initialized");
     return true;
 }
