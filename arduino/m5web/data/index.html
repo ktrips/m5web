@@ -253,7 +253,7 @@
       <div class="msg" id="jpTextMsg"></div>
     </div>
 
-    <div class="card">
+    <div class="card hidden">
       <h2>Put TEXT for print (English)</h2>
       <textarea id="textInput" placeholder="Put TEXT in English only for printing out"></textarea>
       <button class="primary full" id="printTextBtn" style="margin-top:10px">Print TEXT</button>
@@ -276,13 +276,12 @@
   <div class="tab-content hidden" id="tabSettings">
     <div class="card">
       <h2>デフォルト: 明るさ・コントラスト</h2>
-      <p class="meta">M5StickVカメラ・写真アップロードの両方に使われる初期値です。</p>
+      <p class="meta">カメラ・写真アップロード共通の初期値です。</p>
       <label>明るさ <span id="defaultBrightnessVal">0</span></label>
       <input type="range" id="defaultBrightness" min="-100" max="100" value="0">
       <label>コントラスト <span id="defaultContrastVal">0</span></label>
       <input type="range" id="defaultContrast" min="-100" max="100" value="0">
-      <p class="meta">M5StickVカメラは次に撮影される写真から反映されます（表示中の写真には反映されません）。
-      写真アップロードは次に選択する写真の初期値として使われます（選択後は「画像を印刷」で個別に調整できます）。</p>
+      <p class="meta">次に撮影・選択する写真から反映されます。</p>
     </div>
 
     <div class="card">
@@ -295,10 +294,10 @@
         <input type="radio" name="camMode" id="camModePreview" value="preview" checked>
         <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷、デフォルト）</label>
       </div>
-      <p class="meta">ウェブ上に表示された後に印刷ボタンを押すか、ATOMのボタンを押して印刷。</p>
-      <label>写真の回転（次に受信するフレームから適用）</label>
+      <p class="meta">表示後に印刷ボタンかATOMのボタンで印刷。</p>
+      <label>写真の回転</label>
       <button type="button" class="secondary full" id="camDefaultRotateBtn">回転（現在: <span id="camDefaultRotateVal">0</span>°）</button>
-      <p class="meta">押すたびに時計回りに90°ずつ回転します。すでに受信・表示中の1枚には遡って反映されません。</p>
+      <p class="meta">次に受信するフレームから時計回りに90°ずつ回転します。</p>
     </div>
 
     <div class="card">
@@ -311,45 +310,41 @@
         <input type="radio" name="poemType" id="poemTypePoem" value="poem">
         <label for="poemTypePoem" style="margin:0;color:var(--text)">ポエム（30文字程度の自由詩）</label>
       </div>
-      <p class="meta">「俳句を作る」ボタンで生成する詩の形式を選びます。縦書き印刷の列数もこれに合わせて変わります。
-      ATOM Lite本体のボタンを<b>ダブルクリック</b>しても切り替えられます——本体LEDが
-      <b>緑色なら俳句モード、青色ならポエムモード</b>です（今どちらのモードかは、この設定を
-      切り替えた直後や、印刷可能な写真がある間、常にLEDの色でわかります）。</p>
+      <p class="meta">「俳句を作る」ボタンで生成する詩の形式です。ATOM Lite本体のボタン
+      <b>ダブルクリック</b>でも切替可能（LED<b>緑=俳句、青=ポエム</b>）。</p>
 
       <label style="margin-top:12px">著者名（任意）</label>
       <input type="text" id="haikuAuthor" placeholder="例: 芭蕉">
-      <p class="meta">入力すると、印刷時に左端下へ縦書きで小さく添えられます。空欄なら何も印刷されません。</p>
+      <p class="meta">入力すると印刷時に左下へ小さく添えます。</p>
 
       <label style="margin-top:16px">印刷の自動化</label>
       <div class="radio-line">
         <input type="radio" name="haikuAutoMode" id="haikuAutoNone" value="none" checked>
-        <label for="haikuAutoNone" style="margin:0;color:var(--text)">俳句を作らない（デフォルト。「俳句を作る」ボタンを押した時だけ生成）</label>
+        <label for="haikuAutoNone" style="margin:0;color:var(--text)">作らない（デフォルト）</label>
       </div>
       <div class="radio-line">
         <input type="radio" name="haikuAutoMode" id="haikuAutoGenerate" value="generate">
-        <label for="haikuAutoGenerate" style="margin:0;color:var(--text)">自動で俳句作成（撮影・アップロード時に自動生成してボックスに表示。印刷はボタンで）</label>
+        <label for="haikuAutoGenerate" style="margin:0;color:var(--text)">自動生成（印刷はボタンで）</label>
       </div>
       <div class="radio-line">
         <input type="radio" name="haikuAutoMode" id="haikuAutoPrint" value="print">
-        <label for="haikuAutoPrint" style="margin:0;color:var(--text)">自動でプリントまで実行（撮影・アップロード時に自動生成・自動印刷）</label>
+        <label for="haikuAutoPrint" style="margin:0;color:var(--text)">自動生成＋自動印刷</label>
       </div>
-      <p class="meta">M5StickV撮影・写真アップロードのどちらでも、ここで選んだ自動化レベルが適用されます
-      （上の「M5StickV設定」の事後閲覧／プレビュー確認モードとは独立した設定です）。
-      自動生成・自動印刷はこのページを開いているブラウザが行うため、<b>m5webページを開いたままにしておく必要があります</b>
-      （OpenAI設定でAPIキーも登録しておいてください）。</p>
+      <p class="meta">ページを開いたブラウザが処理するため、<b>m5webを開いたままにしてください</b>
+      （要OpenAI APIキー）。</p>
       <div class="msg" id="haikuMsg"></div>
     </div>
 
     <div class="card">
       <h2>QRコード埋め込み（オプショナル）</h2>
-      <p class="meta">URLを入力すると、アップロード画像・俳句プリントの右下に小さなQRコードを重ねて印刷します。空欄なら何も印刷されません（M5StickVカメラの直接印刷には適用されません）。短縮URLなど短い文字列（目安100文字以内）を推奨します。</p>
+      <p class="meta">URLを入力すると、アップロード画像・俳句プリントの右下に小さなQRコードを重ねます（M5StickV直接印刷には非適用）。空欄なら印刷しません。短縮URL推奨。</p>
       <label>URL</label>
       <input type="text" id="qrWatermarkUrl" placeholder="https://example.com">
       <button class="primary full" id="qrWatermarkSaveBtn" style="margin-top:12px">保存</button>
       <div class="msg" id="qrWatermarkMsg"></div>
     </div>
 
-    <div class="card">
+    <div class="card hidden">
       <h2>外部データ転送（オプショナル）</h2>
       <p class="meta">URLを入力すると、M5StickVで撮った写真・アップロードした写真を、撮影・選択のたびにそのURLへHTTP POST（JSON形式）で自動転送します。空欄なら何も転送しません。印刷設定（自動印刷／プレビュー確認、俳句の自動化）とは独立していて、印刷するかどうかに関わらず転送されます。転送はこのページを開いているブラウザが行うため、<b>m5webページを開いたままにしておく必要があります</b>。</p>
       <label>転送先URL</label>
@@ -372,29 +367,27 @@
         <label>画像の更新タイミング（秒）</label>
         <input type="text" inputmode="decimal" id="m5paperPollInterval" placeholder="1">
       </div>
-      <p class="meta">自動更新無しの場合、M5Paper本体のボタンを押した時にギャラリーが更新されます。</p>
+      <p class="meta">自動更新無しの場合、本体ボタンを押すとギャラリーが更新されます。</p>
       <div class="msg" id="m5paperMsg"></div>
     </div>
 
     <div class="card">
       <h2>Wi-Fi設定</h2>
-      <p class="meta">接続先を変更する場合に使う。保存すると新しいネットワークへの接続を試みる。
-      失敗した場合は設定用のAPモードに戻るので、本機に再度アクセスして設定し直せる。</p>
+      <p class="meta">接続先を変更する場合に使います。失敗すると設定用APモードに戻ります。</p>
       <label>SSID</label>
       <input type="text" id="settingsSsid" placeholder="ネットワーク名">
       <label>パスワード</label>
       <input type="password" id="settingsWifiPass" placeholder="Wi-Fiパスワード">
       <button class="primary full" id="settingsWifiSaveBtn" style="margin-top:12px">保存</button>
       <div class="msg" id="settingsWifiMsg"></div>
-      <p class="meta">接続後は同じWi-Fi内の端末から <b>http://m5web.local</b> にアクセスしてください。</p>
+      <p class="meta">接続後は同じWi-Fi内から <b>http://m5web.local</b> へアクセスしてください。</p>
     </div>
 
     <div class="card">
       <h2>OpenAI設定</h2>
-      <p class="meta">「俳句を作る」ボタン（カメラタブ・アップロードタブ）でOpenAIの画像認識モデルを使うためのAPIキーです。
+      <p class="meta">「俳句を作る」機能用のAPIキーです。
       <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">platform.openai.com</a>
-      で発行できます。ATOM Lite本体のNVSに保存され、一度保存すると再表示はされません
-      （Wi-Fiパスワードと同じ扱いです）。</p>
+      で発行できます。保存後は再表示されません。</p>
       <span class="badge" id="openaiStatusBadge"><span class="dot" id="openaiStatusDot"></span><span id="openaiStatusText">確認中…</span></span>
       <label style="margin-top:12px">APIキー</label>
       <input type="password" id="openaiApiKey" placeholder="sk-...">
