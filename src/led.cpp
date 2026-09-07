@@ -22,8 +22,11 @@ unsigned long blinkNextMs = 0;
 
 // Lights the LED in the current mode color (green/blue), or off — never
 // both channels at once, so the color always unambiguously reads as one
-// mode or the other.
-void setLit(bool on) {
+// mode or the other. Used only for the brief notifyNewImage() blink; the
+// steady "something is printable" state uses setWhiteLit() instead (see
+// applyBaseState()) so it reads as a distinct, unambiguous "ready" signal
+// regardless of poem mode.
+void setModeColorLit(bool on) {
     if (haikuMode) {
         neopixelWrite(kPin, 0, on ? kBrightness : 0, 0);
     } else {
@@ -31,16 +34,18 @@ void setLit(bool on) {
     }
 }
 
-void applyBaseState() { setLit(cameraPending || galleryNonEmpty); }
+void setWhiteLit(bool on) { neopixelWrite(kPin, on ? kBrightness : 0, on ? kBrightness : 0, on ? kBrightness : 0); }
+
+void applyBaseState() { setWhiteLit(cameraPending || galleryNonEmpty); }
 
 }  // namespace
 
-void begin() { setLit(false); }
+void begin() { setWhiteLit(false); }
 
 void notifyNewImage() {
     blinking = true;
     blinkLit = true;
-    setLit(true);
+    setModeColorLit(true);
     blinkHalfStepsLeft = kBlinkCount * 2 - 1;  // remaining: off,on,off,on,off
     blinkNextMs = millis() + kBlinkOnMs;
 }
@@ -65,7 +70,7 @@ void poll() {
     if ((long)(millis() - blinkNextMs) < 0) return;
 
     blinkLit = !blinkLit;
-    setLit(blinkLit);
+    setModeColorLit(blinkLit);
     blinkHalfStepsLeft--;
     if (blinkHalfStepsLeft == 0) {
         blinking = false;

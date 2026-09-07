@@ -11,32 +11,29 @@
 #include "wifi_manager.h"
 
 // ATOM Lite's builtin button (G39, active LOW).
-//   single short press (released before kResetHoldMs, with no second short
-//     press following within kDoubleTapWindowMs) -> reprint the last
-//     M5StickV camera frame, if any
-//   double-click (two short-press releases within kDoubleTapWindowMs of
-//     each other)                                -> toggle 俳句/ポエム
-//     generation mode (Haiku::poemType()), reflected by the LED color
-//     (green=俳句, blue=ポエム; see led.h)
-//   held past kResetHoldMs                        -> forget saved WiFi
-//     credentials and drop back into AP setup mode
+//   double-click (two short presses within kDoubleTapWindowMs of each
+//     other) -> reprint the last M5StickV camera frame, if any. A single
+//     short press alone does nothing — requiring the double-click is
+//     deliberate, so a stray bump of the button (it's small and exposed)
+//     can't fire off a print by itself.
+//   held past kResetHoldMs -> forget saved WiFi credentials and drop back
+//     into AP setup mode
+//
+// This double-click used to toggle 俳句/ポエム generation mode
+// (Haiku::poemType()) instead of printing — that's now set from the
+// m5webページ's 「俳句設定」card (Haiku::setPoemType() /
+// /api/haiku/settings) only; this button no longer touches it.
 constexpr uint8_t kButtonPin = 39;
 constexpr unsigned long kResetHoldMs = 5000;
 constexpr unsigned long kMinPressMs = 50;  // debounce floor for a "real" short press
 constexpr unsigned long kDoubleTapWindowMs = 400;
 unsigned long buttonDownSinceMs = 0;
-// 0 = no single-click awaiting confirmation; otherwise the millis() of a
-// short-press release still waiting to see whether a second one follows
-// within kDoubleTapWindowMs (in which case it becomes a double-click
-// instead, and the pending reprint never fires).
-unsigned long pendingSingleClickMs = 0;
-
-void togglePoemMode() {
-    bool nowHaiku = Haiku::poemType() != "haiku";  // i.e. was "poem" (or unset) -> becomes "haiku"
-    Haiku::setPoemType(nowHaiku ? "haiku" : "poem");
-    Led::setModeColor(nowHaiku);
-    Serial.printf("[button] double-click: poem mode -> %s\n", Haiku::poemType().c_str());
-}
+// 0 = no short-click awaiting a possible second one; otherwise the
+// millis() of a short-press release still waiting to see whether a second
+// one follows within kDoubleTapWindowMs (which fires the print). A lone
+// click that never gets a follow-up simply expires unused — no action is
+// taken for it.
+unsigned long pendingClickMs = 0;
 
 void checkButton() {
     bool pressed = digitalRead(kButtonPin) == LOW;
@@ -50,22 +47,15 @@ void checkButton() {
         buttonDownSinceMs = 0;
         if (heldMs >= kMinPressMs && heldMs < kResetHoldMs) {
             unsigned long now = millis();
-            if (pendingSingleClickMs != 0 && (now - pendingSingleClickMs) <= kDoubleTapWindowMs) {
-                pendingSingleClickMs = 0;
-                togglePoemMode();
+            if (pendingClickMs != 0 && (now - pendingClickMs) <= kDoubleTapWindowMs) {
+                pendingClickMs = 0;
+                Serial.println("[button] double-click: reprinting last camera frame");
+                if (!CameraLink::printLastFrame()) {
+                    Serial.println("[button] no camera frame to print yet");
+                }
             } else {
-                pendingSingleClickMs = now;
+                pendingClickMs = now;
             }
-        }
-    }
-
-    // A single short press only becomes a reprint once the double-tap
-    // window has passed without a second press — see kDoubleTapWindowMs.
-    if (pendingSingleClickMs != 0 && millis() - pendingSingleClickMs > kDoubleTapWindowMs) {
-        pendingSingleClickMs = 0;
-        Serial.println("[button] short press: reprinting last camera frame");
-        if (!CameraLink::printLastFrame()) {
-            Serial.println("[button] no camera frame to print yet");
         }
     }
 }

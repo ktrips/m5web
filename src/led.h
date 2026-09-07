@@ -7,20 +7,20 @@
 // signals capture/send progress on the camera side instead.
 //
 // Two independent signals share the one LED:
-//   - notifyNewImage(): a brief 3x blink when a new image lands in the
+//   - notifyNewImage(): a brief 3x blink, in the current mode color (green
+//     for 俳句, blue for ポエム — see Haiku::poemType(), set from the
+//     m5webページ's 「俳句設定」card via /api/haiku/settings, and restored
+//     from NVS at boot) via setModeColor(), when a new image lands in the
 //     gallery (M5StickV capture or phone upload), whether or not it ends
 //     up auto-printed.
-//   - solid color whenever there's an image that can be printed: either the
+//   - solid WHITE whenever there's an image that can be printed: either the
 //     gallery holds at least one saved photo (always reprintable via the
 //     web UI), or a CameraLink frame is awaiting a print/discard decision
 //     in preview mode. Off only when neither is true. A running blink
-//     temporarily overrides the solid state, then restores it.
-//
-// Both signals share a single mode color — green for 俳句 mode, blue for
-// ポエム mode (see Haiku::poemType(), and the double-click handling in
-// main.cpp that toggles it) — set via setModeColor() and otherwise left
-// alone, so glancing at the LED tells you both "is something printable"
-// (lit or not) and "which poem mode is active" (which color) at once.
+//     temporarily overrides this solid state, then restores it. Kept a
+//     plain white (not the mode color) so "there's something to print" is
+//     an unambiguous signal on its own — see ATOM Lite本体のボタン・RGB LED
+//     in README.md.
 namespace Led {
 
 void begin();
