@@ -5,6 +5,8 @@ Wi-Fiに接続し、`m5web` というWebページをホストする。iPhoneな�
 写真をアップロードすると、プリンター用の白黒ビットマップに変換してサーマルプリンターから
 印刷する。テキスト・QRコードをそのまま印刷する機能もある。M5StickVカメラをUARTで直結して
 撮った写真をそのまま印刷することもできる（[M5StickVカメラ連携](#m5stickvカメラ連携)）。
+WiFi経由でM5Stack Unit CamS3-5MPから撮った写真を転送・印刷することもできる
+（[CamS3カメラ連携](#camS3カメラ連携)）。
 
 ## ハードウェア
 
@@ -483,6 +485,69 @@ docs.m5stack.com/en/arduino/papercolor/program・.../buttonを根拠に実装）
   対策として`runSetupAP()`内で`WiFi.mode(WIFI_OFF)`→`delay(100)`→`WiFi.mode(WIFI_AP_STA)`の
   クリーンな遷移と`WiFi.setSleep(false)`を入れてある。それでも改善しない場合は本体を再起動して
   再試行すること。
+
+## CamS3カメラ連携
+
+M5Stack **Unit CamS3-5MP**（ESP32-S3＋5MPカメラセンサー）で撮った写真を、WiFi経由でATOM Lite
+（m5web）へ送って印刷させるスケッチ（[`arduino/camS3/camS3.ino`](arduino/camS3/camS3.ino)）。
+M5StickVと違いCamS3自体にWiFiがあるため、UART直結ではなくWiFi接続で完結する——ATOM Lite側の
+追加設定・改造は不要で、既存の[`/api/print/photo`](#外部プログラムからの写真送信apiprintphoto)
+（外部プログラムからのJPEGアップロード用エンドポイント）にmultipart/form-dataでPOSTするだけの
+構成になっている。
+
+CamS3にはボタンも画面も無いため、撮影は次のどちらかで行う:
+
+- **GPIO0を外部ボタンでGNDに落とす**（M5Stack公式サンプルと同じ配線）。
+- **`GET /shutter`をCamS3自身にリクエストする**（例: `curl http://cams3.local/shutter`）。
+  配線不要でスマホや自動化スクリプトからも撮影できる。
+
+撮影中・送信中は本体のLED（フラッシュ用、GPIO14）が点灯し、成功で短く1回、失敗で3回点滅する。
+
+### 導入手順
+
+1. Arduino IDEで以下を設定する（追加ライブラリのインストールは不要——`esp_camera.h`と
+   WiFi/WebServer/DNSServer/Preferences/ESPmDNSはすべてESP32 Arduinoコア同梱）。
+   - ボード: 「M5UnitCAMS3」（無ければ「ESP32S3 Dev Module」でも可、下記を手動設定）
+   - USB CDC On Boot: Enabled
+   - PSRAM: OPI PSRAM（**必須** — 5MP対応のJPEGフレームバッファにはPSRAMが要る）
+   - arduino-esp32コア v3.3.0以降推奨
+2. [`arduino/camS3/camS3.ino`](arduino/camS3/camS3.ino)冒頭の`M5WEB_HOST`を必要なら
+   （`.local`解決がうまくいかない場合）ATOM LiteのIPアドレスに書き換える。**Wi-FiのSSID・
+   パスワードはソースコードに書く必要はない**（初回セットアップで設定する）。
+3. 書き込む。
+
+### 初回セットアップ（Wi-Fi）
+
+ATOM Lite・M5PaperColorと同じ方式（`src/wifi_manager.cpp`と同じ）。
+
+1. 書き込み直後はWi-Fi設定が無いため、本機が `camS3-setup-XXXX` という名前のオープンAPを
+   立ち上げる（LEDがゆっくり点滅して設定待ちを示す）。
+2. スマホのWi-Fi設定からこのAPに接続する。
+3. ブラウザで `http://192.168.4.1` を開く（キャプティブポータルとして自動的に開くこともある）。
+4. 表示されたページでATOM Liteと同じWi-Fiネットワークを選び（またはSSIDを手入力し）、
+   パスワードを入力して「接続する」を押す。
+5. 接続に成功すると本機のAPは終了し、指定したWi-Fiにクライアントとして参加する。設定は
+   NVSに保存され、次回起動時からは自動的にそのネットワークへ接続する。
+
+保存した接続先に繋がらなくなった場合は自動的にこのAP設定モードへ戻る。
+
+### 既知の注意点
+
+このスケッチは実機での動作確認ができていない（M5Stack公式ドキュメント
+docs.m5stack.com/en/arduino/m5unitcams3_5mp/web_camを根拠に実装）。特に以下は要確認:
+
+- **カメラのピン配置**: 公式ドキュメントのサンプルをそのまま転記しているが、実機で
+  `esp_camera_init failed`と出る場合はまずここを疑うこと（シリアルモニタにエラーコードが
+  出る）。
+- **センサーの世代**: CamS3はハードウェア改版でセンサーが変わっている
+  （OV2640→PY260）。esp32-cameraドライバはSCCB経由でセンサーIDを自動判別するため
+  基本的にコード側の対応は不要なはずだが、古いコアバージョンだと新しいセンサーIDを
+  認識できない可能性がある。
+- **解像度**: デフォルトはSVGA（800×600、`kFrameSize`）——m5webの印刷幅は384dot固定
+  かつ`/api/print/photo`は400KB上限があるため、あえてこのUnitの最大解像度（5MP、
+  `FRAMESIZE_QSXGA`）は使っていない。必要なら`camS3.ino`の`kFrameSize`を変更すること。
+- PSRAM無しでは`fb_location = CAMERA_FB_IN_PSRAM`の指定によりカメラ初期化に失敗する見込み
+  ——Arduino IDEの「PSRAM: OPI PSRAM」設定を必ず確認すること。
 
 ## 俳句生成（OpenAI連携）
 
