@@ -220,20 +220,32 @@ function initLocationBadge(){
 initLocationBadge();
 
 // ---------- live view ----------
+// Paused for the duration of an actual capture (see shutterBtn's handler
+// below) — this board's WebServer handles one request at a time, so a
+// live-view poll landing mid-capture would otherwise just queue up and
+// compete with the capture for the same single-threaded camera access.
 let liveTimer=null;
+function startLivePolling(){
+  liveTimer=setInterval(()=>{ $('liveImg').src='/api/camera/live?t='+Date.now(); },600);
+  $('liveImg').src='/api/camera/live?t='+Date.now();
+}
+function pauseLivePolling(){
+  if(liveTimer){ clearInterval(liveTimer); liveTimer=null; }
+}
 $('liveToggle').addEventListener('change',(e)=>{
   if(e.target.checked){
     $('liveImg').style.display='block';
-    liveTimer=setInterval(()=>{ $('liveImg').src='/api/camera/live?t='+Date.now(); },600);
-    $('liveImg').src='/api/camera/live?t='+Date.now();
+    startLivePolling();
   }else{
-    clearInterval(liveTimer); liveTimer=null;
+    pauseLivePolling();
     $('liveImg').style.display='none'; $('liveImg').removeAttribute('src');
   }
 });
 
 // ---------- shutter ----------
 $('shutterBtn').addEventListener('click', async ()=>{
+  const liveWasOn = $('liveToggle').checked && liveTimer;
+  pauseLivePolling();
   $('shutterBtn').disabled=true;
   showMsg($('shutterMsg'),'撮影中…');
   try{
@@ -245,6 +257,7 @@ $('shutterBtn').addEventListener('click', async ()=>{
     showMsg($('shutterMsg'),'通信エラー: '+e.message);
   }finally{
     $('shutterBtn').disabled=false;
+    if(liveWasOn) startLivePolling();
   }
 });
 

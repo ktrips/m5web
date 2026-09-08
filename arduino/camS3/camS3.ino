@@ -87,8 +87,11 @@
 #include <Preferences.h>
 #include <ESPmDNS.h>
 
+#include "clock.h"
 #include "default_adjust.h"
 #include "gallery.h"
+#include "haiku.h"
+#include "openai.h"
 #include "own_camera.h"
 #include "printer.h"
 #include "printer_mode.h"
@@ -594,9 +597,16 @@ void setup() {
     if (PrinterMode::mode() == PrinterMode::Mode::kDirect) {
         // Own-printer/own-gallery init — CamS3 has no printer/gallery of
         // its own to run in kViaAtom mode (see printer_mode.h's doc
-        // comment).
+        // comment). Clock/Haiku/OpenAI are only ever read from this
+        // mode's own web UI (俳句設定/OpenAI設定 cards, and Caption's
+        // timestamp stamping) — via_atom mode never touches them (ATOM
+        // Lite stamps its own timestamp with its own Clock module once
+        // the forwarded photo arrives there).
         Printer::begin();
         Gallery::begin();
+        Clock::begin();
+        Haiku::begin();
+        OpenAI::begin();
     }
 
     WebServer_::begin();
