@@ -1550,6 +1550,41 @@ function unpackAndDraw(canvas, buf, w, h) {
   canvas.style.width = Math.min(360, w * 2) + "px";
 }
 
+// ---------- shutter sound ----------
+// CamS3 itself has no speaker, so the "カシャッ" click plays from
+// whatever phone/PC is viewing this page instead — synthesized via Web
+// Audio (a short filtered noise burst) rather than an embedded audio
+// file, keeping this a single dependency-free HTML file. Only fires for
+// captures triggered from this page's own shutterBtn — a capture
+// triggered remotely (ATOM Lite's button, curl /shutter, GPIO0) has no
+// browser page in the loop to play anything.
+let shutterAudioCtx = null;
+function playShutterSound() {
+  try {
+    if (!shutterAudioCtx) shutterAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = shutterAudioCtx;
+    const duration = 0.09;
+    const bufferSize = Math.floor(ctx.sampleRate * duration);
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      const t = i / bufferSize;
+      const envelope = Math.pow(1 - t, 4); // sharp attack, fast decay -> "click" rather than a dull thud
+      data[i] = (Math.random() * 2 - 1) * envelope;
+    }
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "highpass";
+    filter.frequency.value = 2500;
+    source.connect(filter);
+    filter.connect(ctx.destination);
+    source.start();
+  } catch (e) {
+    // Web Audio unavailable/blocked — silently skip, never block the shutter itself over this
+  }
+}
+
 // ---------- live view (撮影前のリアルタイムプレビュー) ----------
 // Plain snapshot polling, not a true MJPEG push stream — see
 // web_server.cpp's handleCameraLive() doc comment for why.
@@ -1580,6 +1615,7 @@ $("shutterBtn").addEventListener("click", async () => {
   const btn = $("shutterBtn");
   const msg = $("shutterMsg");
   const liveWasOn = $("liveToggle").checked && liveTimer;
+  playShutterSound();
   pauseLivePolling();
   btn.disabled = true;
   showMsg(msg, "撮影中…", "info");

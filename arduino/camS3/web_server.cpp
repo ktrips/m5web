@@ -219,6 +219,33 @@ function initLocationBadge(){
 }
 initLocationBadge();
 
+// ---------- shutter sound ----------
+// CamS3 itself has no speaker — see data_html.h's copy of this function
+// for the full rationale (synthesized click, no embedded audio file;
+// only fires for captures triggered from this page's own shutterBtn).
+let shutterAudioCtx=null;
+function playShutterSound(){
+  try{
+    if(!shutterAudioCtx) shutterAudioCtx=new (window.AudioContext||window.webkitAudioContext)();
+    const ctx=shutterAudioCtx;
+    const duration=0.09;
+    const bufferSize=Math.floor(ctx.sampleRate*duration);
+    const buffer=ctx.createBuffer(1,bufferSize,ctx.sampleRate);
+    const data=buffer.getChannelData(0);
+    for(let i=0;i<bufferSize;i++){
+      const t=i/bufferSize;
+      const envelope=Math.pow(1-t,4);
+      data[i]=(Math.random()*2-1)*envelope;
+    }
+    const source=ctx.createBufferSource();
+    source.buffer=buffer;
+    const filter=ctx.createBiquadFilter();
+    filter.type='highpass'; filter.frequency.value=2500;
+    source.connect(filter); filter.connect(ctx.destination);
+    source.start();
+  }catch(e){}
+}
+
 // ---------- live view ----------
 // Paused for the duration of an actual capture (see shutterBtn's handler
 // below) — this board's WebServer handles one request at a time, so a
@@ -245,6 +272,7 @@ $('liveToggle').addEventListener('change',(e)=>{
 // ---------- shutter ----------
 $('shutterBtn').addEventListener('click', async ()=>{
   const liveWasOn = $('liveToggle').checked && liveTimer;
+  playShutterSound();
   pauseLivePolling();
   $('shutterBtn').disabled=true;
   showMsg($('shutterMsg'),'撮影中…');
