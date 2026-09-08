@@ -123,7 +123,7 @@ label{display:block;margin-top:10px;font-size:14px;color:#555}
     <span class="badge" id="clockBadge">--:--:--</span>
     <span class="badge" id="locationBadge">位置情報を取得中…</span>
   </div>
-  <p class="meta">現在の接続方式: <b id="modeLabel">確認中…</b> ／ 撮影方式: <b id="captureModeLabel">確認中…</b></p>
+  <p class="meta">現在の接続方式: <b id="modeLabel">確認中…</b></p>
 </div>
 
 <div class="card">
@@ -138,23 +138,15 @@ label{display:block;margin-top:10px;font-size:14px;color:#555}
 
   <div id="previewWrap"><canvas id="previewCanvas"></canvas></div>
   <p class="meta" id="previewMeta"></p>
+  <div class="check-line">
+    <input type="checkbox" id="autoPrintToggle">
+    <label for="autoPrintToggle" style="margin:0">自動印刷（撮影後すぐm5webへ送信）</label>
+  </div>
   <div class="btn-row" id="previewActions" style="display:none">
     <button id="printBtn">🖨️ 印刷</button>
     <button class="secondary" id="discardBtn">🗑️ 破棄</button>
   </div>
   <div class="msg" id="previewMsg"></div>
-</div>
-
-<div class="card">
-  <h3>⚙️ 撮影方式</h3>
-  <div class="check-line">
-    <input type="radio" name="camMode" id="camModePreview" value="preview">
-    <label for="camModePreview" style="margin:0">プレビュー確認方式（確認してから印刷、デフォルト）</label>
-  </div>
-  <div class="check-line">
-    <input type="radio" name="camMode" id="camModeAuto" value="auto">
-    <label for="camModeAuto" style="margin:0">事後閲覧方式（自動印刷→あとで確認）</label>
-  </div>
 </div>
 
 <div class="card">
@@ -201,21 +193,23 @@ function updateClock(){
 }
 updateClock(); setInterval(updateClock,1000);
 
-function initLocationBadge(){
+// IP geolocation (ipapi.co, free/no key, city/prefecture-level accuracy)
+// — used directly, not just as a fallback: navigator.geolocation needs a
+// secure context (HTTPS/localhost), and m5cam.local is plain HTTP, so
+// the browser's own Geolocation API is blocked outright before any
+// permission prompt on most modern browsers. This works over plain HTTP
+// (the fetch target is https://, which a plain http:// page is allowed
+// to call — only the reverse is blocked as mixed content) and needs no
+// permission.
+async function initLocationBadge(){
   const badge=$('locationBadge');
-  if(!('geolocation' in navigator)){ badge.textContent='位置情報非対応'; return; }
-  navigator.geolocation.getCurrentPosition(async (pos)=>{
-    try{
-      const {latitude,longitude}=pos.coords;
-      const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&accept-language=ja&zoom=14`);
-      const data=await r.json();
-      const a=data.address||{};
-      const place=a.city||a.town||a.village||a.suburb||a.county||'';
-      const pref=a.state||'';
-      const text=[pref,place].filter(Boolean).join(' ')||data.display_name||'';
-      badge.textContent=text||'場所不明';
-    }catch(e){ badge.textContent='位置情報の取得に失敗'; }
-  },()=>{ badge.textContent='位置情報が利用できません'; },{timeout:10000,maximumAge:600000});
+  try{
+    const r=await fetch('https://ipapi.co/json/');
+    const data=await r.json();
+    if(data.error) throw new Error(data.reason||'lookup failed');
+    const text=[data.region,data.city].filter(Boolean).join(' ')||data.country_name||'';
+    badge.textContent=text?text+'（IPからの概算）':'場所不明';
+  }catch(e){ badge.textContent='位置情報の取得に失敗'; }
 }
 initLocationBadge();
 
@@ -312,8 +306,7 @@ async function refreshPreview(){
   try{
     const r=await fetch('/api/camera/status');
     const s=await r.json();
-    $('captureModeLabel').textContent = s.mode==='preview' ? 'プレビュー確認' : '事後閲覧（自動印刷）';
-    document.getElementById(s.mode==='preview'?'camModePreview':'camModeAuto').checked=true;
+    $('autoPrintToggle').checked = s.mode==='auto';
     if(!s.frameReady){
       $('previewActions').style.display='none';
       $('previewWrap').style.display='none';
@@ -335,14 +328,12 @@ async function refreshPreview(){
     }
   }catch(e){}
 }
-document.querySelectorAll('input[name="camMode"]').forEach((el)=>{
-  el.addEventListener('change',async (e)=>{
-    try{
-      await fetch('/api/camera/mode',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
-        body:'mode='+e.target.value});
-      refreshPreview();
-    }catch(err){}
-  });
+$('autoPrintToggle').addEventListener('change',async (e)=>{
+  try{
+    await fetch('/api/camera/mode',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body:'mode='+(e.target.checked?'auto':'preview')});
+    refreshPreview();
+  }catch(err){}
 });
 $('printBtn').addEventListener('click', async ()=>{
   const msg=$('previewMsg');
