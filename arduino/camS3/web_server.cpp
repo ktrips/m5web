@@ -140,7 +140,7 @@ label{display:block;margin-top:10px;font-size:14px;color:#555}
   <p class="meta" id="previewMeta"></p>
   <div class="check-line">
     <input type="checkbox" id="autoPrintToggle">
-    <label for="autoPrintToggle" style="margin:0">自動印刷（撮影後すぐm5webへ送信）</label>
+    <label for="autoPrintToggle" style="margin:0">自動印刷（撮影後すぐにATOM Printerに送信、印刷）</label>
   </div>
   <div class="btn-row" id="previewActions" style="display:none">
     <button id="printBtn">🖨️ 印刷</button>
@@ -151,12 +151,13 @@ label{display:block;margin-top:10px;font-size:14px;color:#555}
 
 <div class="card">
   <h3>🔀 接続方式</h3>
-  <p class="meta">「ATOM経由」では、撮影した写真はここに設定したm5web(ATOM Lite)へ送られ、
-  印刷・保存・詳細設定はすべてm5web側で行います。CamS3自体にプリンターを直結する場合は
-  「直接接続」に切り替えてください（切り替えると再起動します）。</p>
+  <p class="meta">「ATOMモード」では、撮影した写真は設定したATOM(m5web.local等)へ送られ、
+  印刷・保存・設定は全てATOM側で行われます。</p>
   <label>送信先（ATOM経由モードのみ使用）</label>
   <input type="text" id="atomHost" placeholder="m5web.local">
   <button id="viaAtomBtn">ATOM経由モードにする</button>
+  <p class="meta">CamS3で全て撮影、保存、印刷、設定を行う場合は直接モードに切り替えて下さい
+  （再起動します）。</p>
   <button class="secondary" id="directBtn">直接接続モードにする</button>
   <div class="msg" id="modeMsg"></div>
 </div>
