@@ -694,22 +694,31 @@ ATOM Liteと同じESP32-PICO-D4・同じボタンピン（G39）を持つ別機�
 
 ### 導入手順
 
-1. Arduino IDEでボード「M5Atom」を選択して[`atomMatrix.ino`](arduino/atomMatrix/atomMatrix.ino)
-   を書き込む。追加ライブラリは不要（`pinMode`/`digitalRead`/`digitalWrite`/`Serial`のみ）。
-2. 上表の通り配線する。
-3. ATOM Matrixのボタンを押すと、CamS3のGPIO0が約250ms（`kPulseMs`）だけLOWになり、CamS3側は
+1. Arduino IDEのライブラリマネージャで**FastLED**（Daniel Garcia他）をインストールする
+   （5x5マトリクスLEDの制御に使用。それ以外の追加ライブラリは不要）。
+2. ボード「M5Atom」を選択して[`atomMatrix.ino`](arduino/atomMatrix/atomMatrix.ino)を書き込む。
+3. 上表の通り配線する。
+4. ATOM Matrixのボタンを押すと、CamS3のGPIO0が約250ms（`kPulseMs`）だけLOWになり、CamS3側は
    物理ボタンが押されたのと区別なく撮影を開始する——CamS3側の設定・挙動は
    [CamS3カメラ連携](#camS3カメラ連携)のGPIO0ボタンの節とまったく同じ
    （`OwnCamera::mode()`が「事後閲覧方式」なら撮影→ATOM Liteへ転送→印刷まで自動）。
 
+### LEDマトリクスでのフィードバック
+
+音は出ない（ATOM Matrixにスピーカー/ブザーは非搭載——マイク+スピーカー搭載の「ATOM Echo」とは
+別機種）ため、5x5 RGBマトリクスLED（G27）での視覚フィードバックのみ:
+
+- **白色点灯（ボタンを押している間）**: 押した瞬間に即座に点灯し、離すまで点灯し続ける。
+- **緑色点滅3回（トリガー信号の送信完了時）**: CamS3への250msパルス送信が完了した合図。
+  **CamS3が実際に撮影・印刷に成功したという確認ではない**（ATOM MatrixからCamS3への配線は
+  一方向のみで、戻り信号が無いため）——実際の撮影結果はCamS3自身のLED（GPIO14）やシリアル
+  ログで確認すること。
+- 押した時間が短すぎる、またはデバウンス期間中（`kDebounceMs`＝300ms以内の連打）だった場合は、
+  白が消えるだけで緑点滅はしない（何も送信されていないため）。
+
 ### 既知の注意点
 
-このスケッチは実機での動作確認ができていない。ATOM Matrixの5x5 RGBマトリクスLED（G27）を
-使った押下時の視覚フィードバックは意図的に省略している——ATOM Liteの単色LED（`led.cpp`）が
-使っている`neopixelWrite()`はWS2812系LED1個専用で、25個のマトリクスを光らせるには
-FastLEDやAdafruit_NeoPixelなど別ライブラリの追加が必要になるため、最小構成を優先した。
-シリアルログ（115200bps）のみが動作確認の手段——必要であればライブラリを追加して光らせる
-処理を足すこと。
+このスケッチは実機での動作確認ができていない。
 
 ## 俳句生成（OpenAI連携）
 
