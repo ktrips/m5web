@@ -287,14 +287,19 @@
     </div>
 
     <div class="card">
-      <h2>🔳 QRコードを印刷</h2>
-      <p class="meta">URLなどのテキストをQRコードに変換してプリントします（変換はプリンター本体が行います）。</p>
-      <input type="text" id="qrInput" placeholder="https://example.com">
-      <div class="radio-line">
+      <h2>🔳 QRコードを追加</h2>
+      <p class="meta">URLを入力して保存すると、アップロード画像・俳句プリントの右下に小さなQRコードを
+      自動で重ねます（空欄なら何も付きません。短縮URL推奨）。</p>
+      <input type="text" id="qrWatermarkUrl" placeholder="https://example.com">
+      <button class="secondary full" id="qrWatermarkSaveBtn" style="margin-top:10px">保存</button>
+      <div class="msg" id="qrWatermarkMsg"></div>
+
+      <div class="radio-line" style="margin-top:12px">
         <input type="checkbox" id="qrShowUrl" checked>
         <label for="qrShowUrl" style="margin:0;color:var(--text)">QRの下にURLを印刷する</label>
       </div>
       <button class="primary full" id="printQrBtn" style="margin-top:10px">QRコードを印刷</button>
+      <p class="meta">上のURLだけを単独のQRコードとして印刷します（変換はプリンター本体が行います）。</p>
       <div class="msg" id="qrMsg"></div>
     </div>
   </div>
@@ -819,14 +824,54 @@ const QR = (function () {
   return { buildMatrix };
 })();
 
-// QR watermark / external-forward-URL persistence (the settings cards
-// m5web offers for these) aren't ported to CamS3's own backend — see
-// README.md. Both variables stay "" (their no-op default), which keeps
-// compositeQrWatermark()/forwardPhotoIfConfigured() below safe to call
-// from the shared image/haiku-print code paths without any CamS3-specific
-// branching there.
-let qrWatermarkUrl = "";
+// External-forward-URL persistence (the settings card m5web offers for
+// this) isn't ported to CamS3's own backend — see README.md. Stays ""
+// (its no-op default), which keeps forwardPhotoIfConfigured() below safe
+// to call from the shared image/haiku-print code paths without any
+// CamS3-specific branching there.
 let forwardUrl = "";
+
+// ---------- QRコードを追加 (watermark URL persistence) ----------
+
+let qrWatermarkUrl = "";
+let qrWatermarkLoaded = false;
+
+async function refreshQrWatermarkSettings() {
+  if (qrWatermarkLoaded) return; // only prefill once; don't clobber in-progress edits
+  try {
+    const r = await fetch("/api/qrwatermark/settings");
+    const s = await r.json();
+    qrWatermarkLoaded = true;
+    qrWatermarkUrl = s.url || "";
+    $("qrWatermarkUrl").value = qrWatermarkUrl;
+  } catch (e) {
+    // transient network error; leave the field as-is and try again next poll
+  }
+}
+
+$("qrWatermarkSaveBtn").addEventListener("click", async () => {
+  const msg = $("qrWatermarkMsg");
+  const url = $("qrWatermarkUrl").value.trim();
+  const btn = $("qrWatermarkSaveBtn");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/qrwatermark/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "url=" + encodeURIComponent(url),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    qrWatermarkUrl = url;
+    showMsg(msg, "保存しました", "ok");
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+refreshQrWatermarkSettings();
+setInterval(refreshQrWatermarkSettings, 4000);
 
 // Fire-and-forget POST of a just-selected (upload) photo to the 「外部
 // データ転送」card's configured URL, when configured. No-op if forwardUrl
@@ -1290,7 +1335,7 @@ $("printTextBtn").addEventListener("click", async () => {
 });
 
 $("printQrBtn").addEventListener("click", async () => {
-  const url = $("qrInput").value.trim();
+  const url = $("qrWatermarkUrl").value.trim();
   const msg = $("qrMsg");
   if (!url) {
     showMsg(msg, "URLを入力してください", "err");

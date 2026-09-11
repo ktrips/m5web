@@ -599,8 +599,10 @@ CamS3自身のカメラ用の設定で独立している。UIの出し方はモ�
 3. 書き込む（Sketch > Upload）。以上で完了——Web UI（`arduino/camS3/data/index.html`相当）は
    ファームウェアに埋め込み済み（`arduino/camS3/data_html.h`）なので、m5web本体のような
    `data/`フォルダの別アップロードは**不要**（直接接続・ATOM経由どちらのモードでも）。
-   `data/index.html`はページの編集用ソースとして残っており、変更した場合は
-   `data_html.h`を再生成すること。
+   `data/index.html`はページの編集用ソースとして残っており、**変更した場合は必ず
+   `data_html.h`を再生成すること**（`data/index.html`自体は実機では一切読まれない——
+   再生成を忘れると変更が実機に反映されないまま気づかず放置しがちなので要注意。再生成
+   コマンドは`arduino/camS3/data_html.h`冒頭のコメントに記載）。
 
 ### 初回セットアップ（Wi-Fi）
 

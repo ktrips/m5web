@@ -12,8 +12,24 @@
 // board's smallest realistic scheme) comfortably fits a ~90KB page.
 //
 // Generated from data/index.html — if you edit that file, regenerate
-// this one (see the repo's dev notes / commit history for the exact
-// command) rather than editing this file directly.
+// this one rather than editing this file directly. This keeps everything
+// up to and including the "#include <Arduino.h>" line below as-is (this
+// whole header comment lives there), then wraps the current
+// data/index.html verbatim in a R"HTML(...)HTML" raw string literal:
+//
+//   cd arduino/camS3 && { \
+//     sed -n '1,/^#include <Arduino.h>$/p' data_html.h; \
+//     echo; \
+//     printf 'const char kIndexHtml[] PROGMEM = R"HTML('; \
+//     cat data/index.html; \
+//     printf '\n)HTML";\n'; \
+//   } > /tmp/data_html.h.new && mv /tmp/data_html.h.new data_html.h
+//
+// Easy to forget — this file is what the real device actually serves
+// (data/index.html itself is never read at runtime on CamS3, unlike
+// ATOM Lite's LittleFS-backed copy), so an edit to data/index.html alone
+// silently does nothing on real hardware until this regeneration step
+// runs.
 #include <Arduino.h>
 
 const char kIndexHtml[] PROGMEM = R"HTML(<!doctype html>
@@ -152,12 +168,27 @@ const char kIndexHtml[] PROGMEM = R"HTML(<!doctype html>
   </div>
 
   <div class="tabs">
-    <button type="button" class="tab-btn active" data-tab="camera">撮影</button>
-    <button type="button" class="tab-btn" data-tab="upload">アップロード</button>
+    <button type="button" class="tab-btn active" data-tab="camera">カメラ・画像</button>
     <button type="button" class="tab-btn" data-tab="settings">設定</button>
   </div>
 
   <div class="tab-content" id="tabCamera">
+    <div class="card">
+      <h2>🔆 画像デフォルト: 明るさ・コントラスト</h2>
+      <p class="meta">カメラ・写真アップロード共通の初期値です。</p>
+      <div class="grid2">
+        <div>
+          <label>明るさ <span id="defaultBrightnessVal">0</span></label>
+          <input type="range" id="defaultBrightness" min="-100" max="100" value="0">
+        </div>
+        <div>
+          <label>コントラスト <span id="defaultContrastVal">0</span></label>
+          <input type="range" id="defaultContrast" min="-100" max="100" value="0">
+        </div>
+      </div>
+      <p class="meta">次に撮影・選択する写真から反映されます。</p>
+    </div>
+
     <div class="card">
       <h2>📸 撮影</h2>
       <p class="meta" id="captureModeHint">撮影方式を確認中…</p>
@@ -180,11 +211,9 @@ const char kIndexHtml[] PROGMEM = R"HTML(<!doctype html>
       <div class="msg" id="ownCamMsg"></div>
 
       <p class="meta">印刷した写真は下の「ギャラリー」に追加されます（再印刷・削除が可能）。
-      俳句を添えて印刷したい場合は「アップロード」タブから同じ写真を選び直してください。</p>
+      俳句を添えて印刷したい場合は下の「画像を印刷」カードから同じ写真を選び直してください。</p>
     </div>
-  </div>
 
-  <div class="tab-content hidden" id="tabUpload">
     <div class="card">
       <h2>🖨️ 画像を印刷</h2>
       <label class="file-btn primary full" for="fileInput">写真を選択…</label>
@@ -229,6 +258,31 @@ const char kIndexHtml[] PROGMEM = R"HTML(<!doctype html>
     </div>
 
     <div class="card">
+      <h2>🖋️ 俳句設定</h2>
+      <div class="radio-line">
+        <input type="radio" name="haikuMode" id="haikuModeHaiku" value="haiku">
+        <label for="haikuModeHaiku" style="margin:0;color:var(--text)">俳句（五七五・3行）</label>
+      </div>
+      <div class="radio-line">
+        <input type="radio" name="haikuMode" id="haikuModePoem" value="poem">
+        <label for="haikuModePoem" style="margin:0;color:var(--text)">ポエム（30文字程度の自由詩）</label>
+      </div>
+      <div class="radio-line">
+        <input type="radio" name="haikuMode" id="haikuModeNone" value="none" checked>
+        <label for="haikuModeNone" style="margin:0;color:var(--text)">作らない（デフォルト）</label>
+      </div>
+      <label style="margin-top:12px">著者名（任意、入力すると左下に小さく印字）</label>
+      <input type="text" id="haikuAuthor" placeholder="例: 芭蕉">
+
+      <p class="meta">俳句・ポエムを選ぶと、写真を選ぶたびに自動生成して編集可能なボックスに
+      表示します。</p>
+
+      <p class="meta">ページを開いたブラウザが処理するため、<b>このページを開いたままにしてください</b>
+      （要OpenAI APIキー）。</p>
+      <div class="msg" id="haikuMsg"></div>
+    </div>
+
+    <div class="card">
       <h2>🖨️ 日本語印刷</h2>
       <textarea id="jpTextInput" placeholder="ここに日本語のテキストを入力してください"></textarea>
       <div class="grid2">
@@ -267,14 +321,19 @@ const char kIndexHtml[] PROGMEM = R"HTML(<!doctype html>
     </div>
 
     <div class="card">
-      <h2>🔳 QRコードを印刷</h2>
-      <p class="meta">URLなどのテキストをQRコードに変換してプリントします（変換はプリンター本体が行います）。</p>
-      <input type="text" id="qrInput" placeholder="https://example.com">
-      <div class="radio-line">
+      <h2>🔳 QRコードを追加</h2>
+      <p class="meta">URLを入力して保存すると、アップロード画像・俳句プリントの右下に小さなQRコードを
+      自動で重ねます（空欄なら何も付きません。短縮URL推奨）。</p>
+      <input type="text" id="qrWatermarkUrl" placeholder="https://example.com">
+      <button class="secondary full" id="qrWatermarkSaveBtn" style="margin-top:10px">保存</button>
+      <div class="msg" id="qrWatermarkMsg"></div>
+
+      <div class="radio-line" style="margin-top:12px">
         <input type="checkbox" id="qrShowUrl" checked>
         <label for="qrShowUrl" style="margin:0;color:var(--text)">QRの下にURLを印刷する</label>
       </div>
       <button class="primary full" id="printQrBtn" style="margin-top:10px">QRコードを印刷</button>
+      <p class="meta">上のURLだけを単独のQRコードとして印刷します（変換はプリンター本体が行います）。</p>
       <div class="msg" id="qrMsg"></div>
     </div>
   </div>
@@ -290,18 +349,8 @@ const char kIndexHtml[] PROGMEM = R"HTML(<!doctype html>
         <input type="radio" name="ownCamMode" id="ownCamModePreview" value="preview" checked>
         <label for="ownCamModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷、デフォルト）</label>
       </div>
-      <p class="meta">「撮影」タブでの撮影に適用されます。プレビュー確認方式では、撮った写真を
+      <p class="meta">「カメラ・画像」タブでの撮影に適用されます。プレビュー確認方式では、撮った写真を
       画面で確認してから「印刷」ボタンを押すまで印刷されません。</p>
-    </div>
-
-    <div class="card">
-      <h2>🔆 デフォルト: 明るさ・コントラスト</h2>
-      <p class="meta">カメラ・写真アップロード共通の初期値です。</p>
-      <label>明るさ <span id="defaultBrightnessVal">0</span></label>
-      <input type="range" id="defaultBrightness" min="-100" max="100" value="0">
-      <label>コントラスト <span id="defaultContrastVal">0</span></label>
-      <input type="range" id="defaultContrast" min="-100" max="100" value="0">
-      <p class="meta">次に撮影・選択する写真から反映されます。</p>
     </div>
 
     <div class="card">
@@ -329,40 +378,6 @@ const char kIndexHtml[] PROGMEM = R"HTML(<!doctype html>
       <input type="text" id="atomHost" placeholder="m5web.local">
       <button class="secondary full" id="viaAtomBtn" style="margin-top:8px">ATOM経由モードに切り替える</button>
       <div class="msg" id="modeMsg"></div>
-    </div>
-
-    <div class="card">
-      <h2>🖋️ 俳句設定</h2>
-      <div class="radio-line">
-        <input type="radio" name="poemType" id="poemTypeHaiku" value="haiku" checked>
-        <label for="poemTypeHaiku" style="margin:0;color:var(--text)">俳句（五七五・3行）</label>
-      </div>
-      <div class="radio-line">
-        <input type="radio" name="poemType" id="poemTypePoem" value="poem">
-        <label for="poemTypePoem" style="margin:0;color:var(--text)">ポエム（30文字程度の自由詩）</label>
-      </div>
-      <p class="meta">「俳句を作る」ボタンで生成する詩の形式です。</p>
-
-      <label style="margin-top:12px">著者名（任意）</label>
-      <input type="text" id="haikuAuthor" placeholder="例: 芭蕉">
-      <p class="meta">入力すると印刷時に左下へ小さく添えます。</p>
-
-      <label style="margin-top:16px">印刷の自動化</label>
-      <div class="radio-line">
-        <input type="radio" name="haikuAutoMode" id="haikuAutoNone" value="none" checked>
-        <label for="haikuAutoNone" style="margin:0;color:var(--text)">作らない（デフォルト）</label>
-      </div>
-      <div class="radio-line">
-        <input type="radio" name="haikuAutoMode" id="haikuAutoGenerate" value="generate">
-        <label for="haikuAutoGenerate" style="margin:0;color:var(--text)">自動生成（印刷はボタンで）</label>
-      </div>
-      <div class="radio-line">
-        <input type="radio" name="haikuAutoMode" id="haikuAutoPrint" value="print">
-        <label for="haikuAutoPrint" style="margin:0;color:var(--text)">自動生成＋自動印刷</label>
-      </div>
-      <p class="meta">ページを開いたブラウザが処理するため、<b>このページを開いたままにしてください</b>
-      （要OpenAI APIキー。「アップロード」タブでの写真選択に適用されます）。</p>
-      <div class="msg" id="haikuMsg"></div>
     </div>
 
     <div class="card">
@@ -843,14 +858,54 @@ const QR = (function () {
   return { buildMatrix };
 })();
 
-// QR watermark / external-forward-URL persistence (the settings cards
-// m5web offers for these) aren't ported to CamS3's own backend — see
-// README.md. Both variables stay "" (their no-op default), which keeps
-// compositeQrWatermark()/forwardPhotoIfConfigured() below safe to call
-// from the shared image/haiku-print code paths without any CamS3-specific
-// branching there.
-let qrWatermarkUrl = "";
+// External-forward-URL persistence (the settings card m5web offers for
+// this) isn't ported to CamS3's own backend — see README.md. Stays ""
+// (its no-op default), which keeps forwardPhotoIfConfigured() below safe
+// to call from the shared image/haiku-print code paths without any
+// CamS3-specific branching there.
 let forwardUrl = "";
+
+// ---------- QRコードを追加 (watermark URL persistence) ----------
+
+let qrWatermarkUrl = "";
+let qrWatermarkLoaded = false;
+
+async function refreshQrWatermarkSettings() {
+  if (qrWatermarkLoaded) return; // only prefill once; don't clobber in-progress edits
+  try {
+    const r = await fetch("/api/qrwatermark/settings");
+    const s = await r.json();
+    qrWatermarkLoaded = true;
+    qrWatermarkUrl = s.url || "";
+    $("qrWatermarkUrl").value = qrWatermarkUrl;
+  } catch (e) {
+    // transient network error; leave the field as-is and try again next poll
+  }
+}
+
+$("qrWatermarkSaveBtn").addEventListener("click", async () => {
+  const msg = $("qrWatermarkMsg");
+  const url = $("qrWatermarkUrl").value.trim();
+  const btn = $("qrWatermarkSaveBtn");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/qrwatermark/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "url=" + encodeURIComponent(url),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    qrWatermarkUrl = url;
+    showMsg(msg, "保存しました", "ok");
+  } catch (e) {
+    showMsg(msg, "保存に失敗しました: " + e.message, "err");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+refreshQrWatermarkSettings();
+setInterval(refreshQrWatermarkSettings, 4000);
 
 // Fire-and-forget POST of a just-selected (upload) photo to the 「外部
 // データ転送」card's configured URL, when configured. No-op if forwardUrl
@@ -979,7 +1034,7 @@ initLocationBadge();
 
 // ---------- tabs ----------
 
-const TAB_CONTENT_ID = { camera: "tabCamera", upload: "tabUpload", settings: "tabSettings" };
+const TAB_CONTENT_ID = { camera: "tabCamera", settings: "tabSettings" };
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -1314,7 +1369,7 @@ $("printTextBtn").addEventListener("click", async () => {
 });
 
 $("printQrBtn").addEventListener("click", async () => {
-  const url = $("qrInput").value.trim();
+  const url = $("qrWatermarkUrl").value.trim();
   const msg = $("qrMsg");
   if (!url) {
     showMsg(msg, "URLを入力してください", "err");
@@ -1942,14 +1997,17 @@ function poemTypeColumns(poemType, text) {
   return Math.min(4, Math.max(2, lines.length || 2));
 }
 
+// 俳句設定カードは一つの3択（俳句/ポエム/作らない）にまとまっている——
+// 「俳句」「ポエム」を選ぶと自動生成もその形式になり、「作らない」では
+// 自動生成OFFのまま、手動「俳句を作る」ボタンは俳句形式で動く。
 function currentPoemType() {
-  const el = document.querySelector('input[name="poemType"]:checked');
-  return el ? el.value : "haiku";
+  const el = document.querySelector('input[name="haikuMode"]:checked');
+  return el && el.value === "poem" ? "poem" : "haiku";
 }
 
 function currentHaikuAutoMode() {
-  const el = document.querySelector('input[name="haikuAutoMode"]:checked');
-  return el ? el.value : "none";
+  const el = document.querySelector('input[name="haikuMode"]:checked');
+  return el && el.value !== "none" ? "generate" : "none";
 }
 
 function updateHaikuLabels(poemType) {
@@ -1969,10 +2027,9 @@ async function refreshHaikuSettings() {
     const s = await r.json();
     haikuSettingsLoaded = true;
     const poemType = s.poemType === "poem" ? "poem" : "haiku";
-    $(poemType === "poem" ? "poemTypePoem" : "poemTypeHaiku").checked = true;
+    const mode = s.autoMode === "generate" ? poemType : "none";
+    $(mode === "poem" ? "haikuModePoem" : mode === "haiku" ? "haikuModeHaiku" : "haikuModeNone").checked = true;
     $("haikuAuthor").value = s.author || "";
-    const autoMode = s.autoMode === "generate" || s.autoMode === "print" ? s.autoMode : "none";
-    $(autoMode === "print" ? "haikuAutoPrint" : autoMode === "generate" ? "haikuAutoGenerate" : "haikuAutoNone").checked = true;
     updateHaikuLabels(poemType);
   } catch (e) {
     // transient network error; leave the fields as-is and try again next poll
@@ -1981,15 +2038,21 @@ async function refreshHaikuSettings() {
 
 async function saveHaikuSettings() {
   const msg = $("haikuMsg");
-  const poemType = currentPoemType();
+  const mode = document.querySelector('input[name="haikuMode"]:checked')?.value || "none";
   const author = $("haikuAuthor").value.trim();
-  const autoMode = currentHaikuAutoMode();
-  updateHaikuLabels(poemType);
+  updateHaikuLabels(currentPoemType());
   try {
+    // "none" omits poemType from the request entirely — the ATOM Lite
+    // only updates fields it receives (see web_server.cpp's hasArg
+    // guards), so the last-selected 俳句/ポエム format is left alone
+    // rather than reset, ready for whenever auto-generate is turned back
+    // on or the manual "俳句を作る" button is pressed.
+    let body = "author=" + encodeURIComponent(author) + "&autoMode=" + (mode === "none" ? "none" : "generate");
+    if (mode !== "none") body += "&poemType=" + mode;
     const r = await fetch("/api/haiku/settings", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "poemType=" + poemType + "&author=" + encodeURIComponent(author) + "&autoMode=" + autoMode,
+      body,
     });
     if (!r.ok) throw new Error(await r.text());
     showMsg(msg, "保存しました", "ok");
@@ -1998,7 +2061,7 @@ async function saveHaikuSettings() {
   }
 }
 
-document.querySelectorAll('input[name="poemType"], input[name="haikuAutoMode"]').forEach((el) => {
+document.querySelectorAll('input[name="haikuMode"]').forEach((el) => {
   el.addEventListener("change", saveHaikuSettings);
 });
 $("haikuAuthor").addEventListener("change", saveHaikuSettings);
@@ -2107,23 +2170,22 @@ async function requestHaiku(canvas, btn, textEl, printBtn, msgEl) {
   }
 }
 
-// 俳句設定カードの「印刷の自動化」設定: called from the file-upload handler
-// right after a photo is chosen. Decides whether the haiku/poem half runs
-// automatically, and how far:
-//   "none"     - do nothing; only a manual "俳句を作る" press generates one
-//   "generate" - auto-generate and show it in the editable box, no auto-print
-//   "print"    - auto-generate and auto-print, same as a manual generate
-//                followed by a manual print
-// Reuses requestHaiku()/printHaikuFromText() as-is, so it shows the same
-// status messages a manual click would and, via btn.disabled, can't run
-// concurrently with a manual press on the same card. Not queued: if a second
-// photo arrives while this is still running (a multi-second OpenAI
-// round-trip), its haiku is simply skipped.
+// 俳句設定カードの俳句/ポエム選択: called from the file-upload handler
+// right after a photo is chosen. Decides whether the haiku/poem half
+// auto-generates:
+//   "none"          - do nothing; only a manual "俳句を作る" press generates one (default)
+//   "haiku"/"poem"  - auto-generate (in that format) and show it in the
+//                      editable box. Printing is always a separate manual
+//                      "俳句プリント" press — there is no auto-print mode.
+// Reuses requestHaiku() as-is, so it shows the same status messages a
+// manual click would and, via btn.disabled, can't run concurrently with a
+// manual press on the same card. Not queued: if a second photo arrives
+// while this is still running (a multi-second OpenAI round-trip), its
+// haiku is simply skipped.
 async function autoHaikuFor(canvas, btn, textEl, printBtn, msgEl) {
   const mode = currentHaikuAutoMode();
   if (mode === "none" || btn.disabled) return;
-  const ok = await requestHaiku(canvas, btn, textEl, printBtn, msgEl);
-  if (ok && mode === "print") await printHaikuFromText(textEl, printBtn, msgEl);
+  await requestHaiku(canvas, btn, textEl, printBtn, msgEl);
 }
 
 $("uploadHaikuBtn").addEventListener("click", () => {
@@ -2450,4 +2512,5 @@ setInterval(refreshStatus, 4000);
 </script>
 </body>
 </html>
+
 )HTML";

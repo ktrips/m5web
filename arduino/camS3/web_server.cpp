@@ -695,6 +695,25 @@ void handlePrintQr() {
     sendPlain(200, "OK");
 }
 
+// URL for the optional small QR-code watermark composited into the
+// bottom-right corner of a print — see data/index.html's
+// compositeQrWatermark(). Purely a browser-side concern (this board just
+// persists the string), same pattern as Haiku's fields — empty (the
+// default) means no watermark is drawn. Mirrors src/web_server.cpp's
+// identically-named fields on the ATOM Lite side.
+Preferences qrWatermarkPrefs;
+String qrWatermarkUrl;
+
+void handleQrWatermarkSettingsGet() {
+    server.send(200, "application/json", "{\"url\":\"" + jsonEscape(qrWatermarkUrl.c_str()) + "\"}");
+}
+
+void handleQrWatermarkSettingsSet() {
+    qrWatermarkUrl = server.hasArg("url") ? server.arg("url") : "";
+    qrWatermarkPrefs.putString("url", qrWatermarkUrl);
+    sendPlain(200, "OK");
+}
+
 uint16_t pendingWidth = 0;
 uint16_t pendingHeight = 0;
 String pendingLocation;
@@ -948,6 +967,9 @@ void handleOpenAISettingsSet() {
 }  // namespace
 
 void begin() {
+    qrWatermarkPrefs.begin("m5cam_qrwm", false);
+    qrWatermarkUrl = qrWatermarkPrefs.getString("url", "");
+
     server.on("/", HTTP_GET, handleRoot);
     server.onNotFound(handleRoot);
     server.on("/api/status", HTTP_GET, handleStatus);
@@ -986,6 +1008,8 @@ void begin() {
         server.on("/api/printer/settings", HTTP_POST, handlePrinterSettingsSet);
         server.on("/api/print/text", HTTP_POST, handlePrintText);
         server.on("/api/print/qr", HTTP_POST, handlePrintQr);
+        server.on("/api/qrwatermark/settings", HTTP_GET, handleQrWatermarkSettingsGet);
+        server.on("/api/qrwatermark/settings", HTTP_POST, handleQrWatermarkSettingsSet);
         server.on("/api/print/test", HTTP_POST, handlePrintTest);
         server.on("/api/print/image/begin", HTTP_POST, handleImageBegin);
         server.on("/api/print/image", HTTP_POST, handleImageUploadComplete, handleImageUploadChunk);
