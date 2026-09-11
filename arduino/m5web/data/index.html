@@ -306,14 +306,19 @@
     </div>
 
     <div class="card">
-      <h2>QRコードを印刷</h2>
-      <p class="meta">URLなどのテキストをQRコードに変換してプリントします（変換はプリンター本体が行います）。</p>
-      <input type="text" id="qrInput" placeholder="https://example.com">
-      <div class="radio-line">
+      <h2>QRコードを追加</h2>
+      <p class="meta">URLを入力して保存すると、アップロード画像・俳句プリントの右下に小さなQRコードを
+      自動で重ねます（M5StickV直接印刷には非適用）。空欄なら何も付きません。短縮URL推奨。</p>
+      <input type="text" id="qrWatermarkUrl" placeholder="https://example.com">
+      <button class="secondary full" id="qrWatermarkSaveBtn" style="margin-top:10px">保存</button>
+      <div class="msg" id="qrWatermarkMsg"></div>
+
+      <div class="radio-line" style="margin-top:12px">
         <input type="checkbox" id="qrShowUrl" checked>
         <label for="qrShowUrl" style="margin:0;color:var(--text)">QRの下にURLを印刷する</label>
       </div>
       <button class="primary full" id="printQrBtn" style="margin-top:10px">QRコードを印刷</button>
+      <p class="meta">上のURLだけを単独のQRコードとして印刷します（変換はプリンター本体が行います）。</p>
       <div class="msg" id="qrMsg"></div>
     </div>
   </div>
@@ -330,15 +335,6 @@
         <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷、デフォルト）</label>
       </div>
       <p class="meta">表示後に印刷ボタンかATOMのボタンで印刷。</p>
-    </div>
-
-    <div class="card">
-      <h2>QRコード埋め込み（オプショナル）</h2>
-      <p class="meta">URLを入力すると、アップロード画像・俳句プリントの右下に小さなQRコードを重ねます（M5StickV直接印刷には非適用）。空欄なら印刷しません。短縮URL推奨。</p>
-      <label>URL</label>
-      <input type="text" id="qrWatermarkUrl" placeholder="https://example.com">
-      <button class="primary full" id="qrWatermarkSaveBtn" style="margin-top:12px">保存</button>
-      <div class="msg" id="qrWatermarkMsg"></div>
     </div>
 
     <div class="card hidden">
@@ -1461,7 +1457,7 @@ $("printTextBtn").addEventListener("click", async () => {
 });
 
 $("printQrBtn").addEventListener("click", async () => {
-  const url = $("qrInput").value.trim();
+  const url = $("qrWatermarkUrl").value.trim();
   const msg = $("qrMsg");
   if (!url) {
     showMsg(msg, "URLを入力してください", "err");
