@@ -16,7 +16,12 @@ void begin() {
     prefs.begin("m5web_haiku", false);
     poemTypeValue = prefs.getString("poemType", "haiku");
     authorValue = prefs.getString("author", "");
-    autoModeValue = prefs.getString("autoMode", "none");
+    // A pre-existing "print" value (from before auto-print was removed —
+    // see setAutoMode()) still generates, just no longer auto-prints; it's
+    // not reset all the way to "none" so that migration doesn't silently
+    // turn generation off for someone who had it on.
+    String storedAutoMode = prefs.getString("autoMode", "none");
+    autoModeValue = storedAutoMode == "generate" || storedAutoMode == "print" ? "generate" : "none";
 }
 
 String poemType() { return poemTypeValue; }
@@ -36,7 +41,7 @@ void setAuthor(const String &name) {
 String autoMode() { return autoModeValue; }
 
 void setAutoMode(const String &mode) {
-    autoModeValue = (mode == "generate" || mode == "print") ? mode : "none";
+    autoModeValue = mode == "generate" ? "generate" : "none";
     prefs.putString("autoMode", autoModeValue);
 }
 

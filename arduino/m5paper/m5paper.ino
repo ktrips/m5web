@@ -201,13 +201,14 @@ constexpr uint16_t kBtnCHoldThreshMs = 800;
 // this device also writes back to it, unlike every other m5web setting) ----
 String haikuPoemType = "haiku";  // "haiku" or "poem"
 String haikuAuthor;              // "" if unset
-String haikuAutoMode = "none";   // "none"/"generate"/"print"
+String haikuAutoMode = "none";   // "none"/"generate" — "print" (auto-print) was removed, see haiku.h
 
 // Cycle order for BtnA/BtnB on the 俳句設定 screen (see
-// cycleHaikuAutoMode()) — matches the m5webページ's radio order (俳句を作らない
-// -> 自動で俳句作成 -> 自動でプリントまで実行).
-const char *kHaikuAutoModes[] = {"none", "generate", "print"};
-constexpr int kHaikuAutoModeCount = 3;
+// cycleHaikuAutoMode()) — matches the m5webページ's merged 俳句設定 radio
+// (作らない -> 俳句/ポエム's 自動生成; printing is always a manual button
+// press there now, no auto-print mode exists to cycle to).
+const char *kHaikuAutoModes[] = {"none", "generate"};
+constexpr int kHaikuAutoModeCount = 2;
 
 String apiUrl(const String &path) { return String("http://") + M5WEB_HOST + path; }
 
@@ -581,10 +582,8 @@ void renderHaikuSettings() {
     canvas.drawString("形式: " + typeLabel, MARGIN, y);
     y += 36;
 
-    String autoLabel = haikuAutoMode == "print"      ? "自動でプリントまで実行"
-                        : haikuAutoMode == "generate" ? "自動で俳句作成"
-                                                       : "俳句を作らない（デフォルト）";
-    canvas.drawString("印刷の自動化: " + autoLabel, MARGIN, y);
+    String autoLabel = haikuAutoMode == "generate" ? "自動生成（印刷はボタンで）" : "作らない（デフォルト）";
+    canvas.drawString("自動生成: " + autoLabel, MARGIN, y);
     y += 36;
 
     canvas.drawString("著者名: " + (haikuAuthor.length() > 0 ? haikuAuthor : String("（未設定）")), MARGIN, y);
