@@ -325,16 +325,17 @@
 
   <div class="tab-content hidden" id="tabSettings">
     <div class="card">
-      <h2>M5StickV設定</h2>
+      <h2>自動化設定</h2>
       <div class="radio-line">
-        <input type="radio" name="camMode" id="camModeAuto" value="auto">
-        <label for="camModeAuto" style="margin:0;color:var(--text)">事後閲覧方式（自動印刷→あとで確認）</label>
+        <input type="checkbox" id="autoPrintImage">
+        <label for="autoPrintImage" style="margin:0;color:var(--text)">画像が転送されてきたら自動印刷</label>
       </div>
       <div class="radio-line">
-        <input type="radio" name="camMode" id="camModePreview" value="preview" checked>
-        <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷、デフォルト）</label>
+        <input type="checkbox" id="autoPrintHaiku">
+        <label for="autoPrintHaiku" style="margin:0;color:var(--text)">俳句が生成されたら自動印刷</label>
       </div>
-      <p class="meta">表示後に印刷ボタンかATOMのボタンで印刷。</p>
+      <p class="meta">どちらもオフ（デフォルト）の場合、画像が届いても俳句が生成されても、それぞれの
+      印刷ボタンを押すまで印刷されません。</p>
     </div>
 
     <div class="card hidden">
@@ -1717,8 +1718,7 @@ async function refreshCameraStatus() {
     const r = await fetch("/api/camera/status");
     const s = await r.json();
 
-    const modeElId = s.mode === "preview" ? "camModePreview" : "camModeAuto";
-    document.getElementById(modeElId).checked = true;
+    $("autoPrintImage").checked = s.mode !== "preview";
     $("camDefaultRotateVal").textContent = s.rotationDeg;
 
     if (!settingsLoaded) {
@@ -1760,18 +1760,16 @@ async function refreshCameraStatus() {
   }
 }
 
-document.querySelectorAll('input[name="camMode"]').forEach((el) => {
-  el.addEventListener("change", async (e) => {
-    try {
-      await fetch("/api/camera/mode", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "mode=" + e.target.value,
-      });
-    } catch (err) {
-      /* ignore; next status poll will resync the radio buttons */
-    }
-  });
+$("autoPrintImage").addEventListener("change", async (e) => {
+  try {
+    await fetch("/api/camera/mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "mode=" + (e.target.checked ? "auto" : "preview"),
+    });
+  } catch (err) {
+    /* ignore; next status poll will resync the checkbox */
+  }
 });
 
 $("camDefaultRotateBtn").addEventListener("click", async () => {
@@ -2088,6 +2086,7 @@ async function refreshHaikuSettings() {
     const mode = s.autoMode === "generate" ? poemType : "none";
     $(mode === "poem" ? "haikuModePoem" : mode === "haiku" ? "haikuModeHaiku" : "haikuModeNone").checked = true;
     $("haikuAuthor").value = s.author || "";
+    $("autoPrintHaiku").checked = !!s.autoPrint;
     updateHaikuLabels(poemType);
   } catch (e) {
     // transient network error; leave the fields as-is and try again next poll
@@ -2123,6 +2122,22 @@ document.querySelectorAll('input[name="haikuMode"]').forEach((el) => {
   el.addEventListener("change", saveHaikuSettings);
 });
 $("haikuAuthor").addEventListener("change", saveHaikuSettings);
+
+// 自動化設定カード（設定タブ先頭）の「俳句が生成されたら自動印刷」— 独立した
+// カード・独立したAPI呼び出し（同じ/api/haiku/settingsだが、俳句設定カード側の
+// 他フィールドには触れない）。requestHaiku()がこの値を見て、生成完了のたびに
+// 自動印刷するかどうかを決める。
+$("autoPrintHaiku").addEventListener("change", async (e) => {
+  try {
+    await fetch("/api/haiku/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "autoPrint=" + (e.target.checked ? "1" : "0"),
+    });
+  } catch (err) {
+    /* ignore; next status poll will resync the checkbox */
+  }
+});
 
 refreshHaikuSettings();
 setInterval(refreshHaikuSettings, 4000);
@@ -2208,6 +2223,9 @@ async function generateHaikuFromCanvas(canvas) {
   return haiku;
 }
 
+// 自動化設定カード（設定タブ先頭）の「俳句が生成されたら自動印刷」チェックボックス
+// を反映して、生成完了のたびに呼ばれる——自動生成（autoHaikuFor()）・手動
+// 「俳句を作る」ボタンのどちらで生成された場合も区別なく効く。
 async function requestHaiku(canvas, btn, textEl, printBtn, msgEl) {
   btn.disabled = true;
   textEl.classList.add("hidden");
@@ -2219,6 +2237,7 @@ async function requestHaiku(canvas, btn, textEl, printBtn, msgEl) {
     textEl.classList.remove("hidden");
     printBtn.classList.remove("hidden");
     msgEl.className = "msg";
+    if ($("autoPrintHaiku").checked) await printHaikuFromText(textEl, printBtn, msgEl);
     return true;
   } catch (e) {
     showMsg(msgEl, "俳句の生成に失敗しました: " + e.message, "err");
@@ -2230,14 +2249,15 @@ async function requestHaiku(canvas, btn, textEl, printBtn, msgEl) {
 
 // 俳句設定カードの俳句/ポエム選択: called both from refreshCameraStatus()
 // whenever a new M5StickV frame shows up, and from the file-upload handler
-// right after a photo is chosen. Independent of the M5StickV設定 card's
-// auto/preview print mode — that only decides whether the *photo* itself
-// auto-prints (entirely ATOM Lite-side); this decides whether the haiku/poem
-// half also auto-generates:
+// right after a photo is chosen. Independent of the 自動化設定 card's
+// 「画像が転送されてきたら自動印刷」— that only decides whether the *photo*
+// itself auto-prints (entirely ATOM Lite-side); this decides whether the
+// haiku/poem half also auto-generates:
 //   "none"          - do nothing; only a manual "俳句を作る" press generates one (default)
 //   "haiku"/"poem"  - auto-generate (in that format) and show it in the
-//                      editable box. Printing is always a separate manual
-//                      "俳句プリント" press — there is no auto-print mode.
+//                      editable box. Whether that then also auto-prints is
+//                      the same 自動化設定 card's separate「俳句が生成された
+//                      ら自動印刷」checkbox — see requestHaiku().
 // Reuses requestHaiku() as-is, so it shows the same status messages a
 // manual click would and, via btn.disabled, can't run concurrently with a
 // manual press on the same card. Not queued: if a second photo arrives

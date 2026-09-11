@@ -937,7 +937,8 @@ void handleGalleryDelete() {
 void handleHaikuSettingsGet() {
     String json = "{\"poemType\":\"" + jsonEscape(Haiku::poemType().c_str()) + "\"" + ",\"author\":\"" +
                   jsonEscape(Haiku::author().c_str()) + "\"" + ",\"autoMode\":\"" +
-                  jsonEscape(Haiku::autoMode().c_str()) + "\"}";
+                  jsonEscape(Haiku::autoMode().c_str()) + "\"" +
+                  ",\"autoPrint\":" + (Haiku::autoPrint() ? "true" : "false") + "}";
     server.send(200, "application/json", json);
 }
 
@@ -945,6 +946,7 @@ void handleHaikuSettingsSet() {
     if (server.hasArg("poemType")) Haiku::setPoemType(server.arg("poemType"));
     if (server.hasArg("author")) Haiku::setAuthor(server.arg("author"));
     if (server.hasArg("autoMode")) Haiku::setAutoMode(server.arg("autoMode"));
+    if (server.hasArg("autoPrint")) Haiku::setAutoPrint(server.arg("autoPrint") == "1");
     sendPlain(200, "OK");
 }
 
