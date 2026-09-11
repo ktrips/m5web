@@ -80,6 +80,9 @@
   progress { width: 100%; height: 8px; margin-top: 8px; accent-color: var(--accent); display: none; }
   progress.show { display: block; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; align-items: end; }
+  .grid3 label { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .grid3 button { padding: 8px 4px; font-size: 13px; }
   .radio-line { display: flex; align-items: center; gap: 6px; font-size: 14px; margin: 6px 0; }
   .hidden { display: none !important; }
   footer { text-align: center; color: var(--sub); font-size: 11px; margin-top: 8px; }
@@ -159,14 +162,21 @@
     <div class="card">
       <h2>画像デフォルト: 明るさ・コントラスト・回転</h2>
       <p class="meta">カメラ・写真アップロード共通の初期値です。</p>
-      <label>明るさ <span id="defaultBrightnessVal">0</span></label>
-      <input type="range" id="defaultBrightness" min="-100" max="100" value="0">
-      <label>コントラスト <span id="defaultContrastVal">0</span></label>
-      <input type="range" id="defaultContrast" min="-100" max="100" value="0">
+      <div class="grid3">
+        <div>
+          <label>明るさ <span id="defaultBrightnessVal">0</span></label>
+          <input type="range" id="defaultBrightness" min="-100" max="100" value="0">
+        </div>
+        <div>
+          <label>コントラスト <span id="defaultContrastVal">0</span></label>
+          <input type="range" id="defaultContrast" min="-100" max="100" value="0">
+        </div>
+        <div>
+          <label>回転</label>
+          <button type="button" class="secondary full" id="camDefaultRotateBtn"><span id="camDefaultRotateVal">0</span>°</button>
+        </div>
+      </div>
       <p class="meta">次に撮影・選択する写真から反映されます。</p>
-      <label>写真の回転</label>
-      <button type="button" class="secondary full" id="camDefaultRotateBtn">回転（現在: <span id="camDefaultRotateVal">0</span>°）</button>
-      <p class="meta">次に受信するフレームから時計回りに90°ずつ回転します。</p>
     </div>
 
     <div class="card">
