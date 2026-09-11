@@ -151,12 +151,24 @@
   </div>
 
   <div class="tabs">
-    <button type="button" class="tab-btn active" data-tab="camera">カメラ</button>
-    <button type="button" class="tab-btn" data-tab="upload">アップロード</button>
+    <button type="button" class="tab-btn active" data-tab="camera">カメラ・画像</button>
     <button type="button" class="tab-btn" data-tab="settings">設定</button>
   </div>
 
   <div class="tab-content" id="tabCamera">
+    <div class="card">
+      <h2>画像デフォルト: 明るさ・コントラスト・回転</h2>
+      <p class="meta">カメラ・写真アップロード共通の初期値です。</p>
+      <label>明るさ <span id="defaultBrightnessVal">0</span></label>
+      <input type="range" id="defaultBrightness" min="-100" max="100" value="0">
+      <label>コントラスト <span id="defaultContrastVal">0</span></label>
+      <input type="range" id="defaultContrast" min="-100" max="100" value="0">
+      <p class="meta">次に撮影・選択する写真から反映されます。</p>
+      <label>写真の回転</label>
+      <button type="button" class="secondary full" id="camDefaultRotateBtn">回転（現在: <span id="camDefaultRotateVal">0</span>°）</button>
+      <p class="meta">次に受信するフレームから時計回りに90°ずつ回転します。</p>
+    </div>
+
     <div class="card">
       <h2>カメラ（M5StickV/CamS3）</h2>
       <p class="meta">M5StickV・CamS3で撮った写真をここに表示します。</p>
@@ -176,9 +188,7 @@
       <button class="primary full hidden" id="camHaikuPrintBtn" style="margin-top:8px">俳句プリント</button>
       <div class="msg" id="camHaikuMsg"></div>
     </div>
-  </div>
 
-  <div class="tab-content hidden" id="tabUpload">
     <div class="card">
       <h2>画像を印刷</h2>
       <label class="file-btn primary full" for="fileInput">写真を選択…</label>
@@ -275,16 +285,6 @@
 
   <div class="tab-content hidden" id="tabSettings">
     <div class="card">
-      <h2>デフォルト: 明るさ・コントラスト</h2>
-      <p class="meta">カメラ・写真アップロード共通の初期値です。</p>
-      <label>明るさ <span id="defaultBrightnessVal">0</span></label>
-      <input type="range" id="defaultBrightness" min="-100" max="100" value="0">
-      <label>コントラスト <span id="defaultContrastVal">0</span></label>
-      <input type="range" id="defaultContrast" min="-100" max="100" value="0">
-      <p class="meta">次に撮影・選択する写真から反映されます。</p>
-    </div>
-
-    <div class="card">
       <h2>M5StickV設定</h2>
       <div class="radio-line">
         <input type="radio" name="camMode" id="camModeAuto" value="auto">
@@ -295,9 +295,6 @@
         <label for="camModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷、デフォルト）</label>
       </div>
       <p class="meta">表示後に印刷ボタンかATOMのボタンで印刷。</p>
-      <label>写真の回転</label>
-      <button type="button" class="secondary full" id="camDefaultRotateBtn">回転（現在: <span id="camDefaultRotateVal">0</span>°）</button>
-      <p class="meta">次に受信するフレームから時計回りに90°ずつ回転します。</p>
     </div>
 
     <div class="card">
@@ -1080,7 +1077,7 @@ initLocationBadge();
 
 // ---------- tabs ----------
 
-const TAB_CONTENT_ID = { camera: "tabCamera", upload: "tabUpload", settings: "tabSettings" };
+const TAB_CONTENT_ID = { camera: "tabCamera", settings: "tabSettings" };
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
