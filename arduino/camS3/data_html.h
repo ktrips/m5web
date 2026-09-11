@@ -162,7 +162,7 @@ const char kIndexHtml[] PROGMEM = R"HTML(<!doctype html>
 
   <div class="card">
     <h2>🖼️ ギャラリー <span class="meta" id="galleryCount"></span></h2>
-    <p class="meta">CamS3で撮った写真・アップロードした写真の保存履歴です（最大20枚、保存先は下の「ストレージ設定」で切替可能）。いっぱいになったら不要なものを削除してください。</p>
+    <p class="meta">CamS3で撮った写真の保存履歴です（最大20枚、ストレージ設定で保存先切替可）。適宜不要なものを削除してください。</p>
     <div class="gallery-grid" id="galleryGrid"></div>
     <p class="meta" id="galleryEmpty">まだ保存された写真はありません</p>
   </div>
