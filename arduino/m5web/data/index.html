@@ -339,6 +339,28 @@
       印刷ボタンを押すまで印刷されません。</p>
     </div>
 
+    <div class="card">
+      <h2>CamS3リモートシャッター</h2>
+      <p class="meta">ATOM Lite本体のボタンをシングルクリックすると、CamS3へ撮影を指示します
+      （ダブルクリックはM5StickV・CamS3どちらの写真も印刷、詳細はREADME参照）。
+      CamS3が直接接続モードでもATOM経由モードでも同じボタン操作で使えます。</p>
+      <div class="radio-line">
+        <input type="radio" name="cams3ConnMode" id="cams3ConnWifi" value="wifi" checked>
+        <label for="cams3ConnWifi" style="margin:0;color:var(--text)">WiFi経由（デフォルト）</label>
+      </div>
+      <div class="radio-line">
+        <input type="radio" name="cams3ConnMode" id="cams3ConnWired" value="wired">
+        <label for="cams3ConnWired" style="margin:0;color:var(--text)">配線直結（GPIO25→CamS3のGPIO0）</label>
+      </div>
+      <p class="meta">配線直結ではWiFi/mDNSを使わないため、ネットワークが不安定な環境でも確実に
+      動く（詳細はREADMEの「ATOM Lite⇔CamS3 直結シャッター」参照）。ただしダブルクリックの
+      再印刷指示は配線1本では送れないため常にWiFi経由になる。</p>
+      <label style="margin-top:12px">CamS3のホスト名（WiFi経由の場合のみ使用）</label>
+      <input type="text" id="cams3Host" placeholder="m5cam.local">
+      <button class="primary full" id="cams3HostSaveBtn" style="margin-top:12px">保存</button>
+      <div class="msg" id="cams3HostMsg"></div>
+    </div>
+
     <div class="card hidden">
       <h2>外部データ転送（オプショナル）</h2>
       <p class="meta">URLを入力すると、M5StickVで撮った写真・アップロードした写真を、撮影・選択のたびにそのURLへHTTP POST（JSON形式）で自動転送します。空欄なら何も転送しません。印刷設定（自動印刷／プレビュー確認、俳句の自動化）とは独立していて、印刷するかどうかに関わらず転送されます。転送はこのページを開いているブラウザが行うため、<b>m5webページを開いたままにしておく必要があります</b>。</p>
@@ -403,27 +425,6 @@
       <div class="msg" id="printerPinsMsg"></div>
     </div>
 
-    <div class="card">
-      <h2>CamS3リモートシャッター</h2>
-      <p class="meta">ATOM Lite本体のボタンをシングルクリックすると、CamS3へ撮影を指示します
-      （ダブルクリックはM5StickV・CamS3どちらの写真も印刷、詳細はREADME参照）。
-      CamS3が直接接続モードでもATOM経由モードでも同じボタン操作で使えます。</p>
-      <div class="radio-line">
-        <input type="radio" name="cams3ConnMode" id="cams3ConnWifi" value="wifi" checked>
-        <label for="cams3ConnWifi" style="margin:0;color:var(--text)">WiFi経由（デフォルト）</label>
-      </div>
-      <div class="radio-line">
-        <input type="radio" name="cams3ConnMode" id="cams3ConnWired" value="wired">
-        <label for="cams3ConnWired" style="margin:0;color:var(--text)">配線直結（GPIO25→CamS3のGPIO0）</label>
-      </div>
-      <p class="meta">配線直結ではWiFi/mDNSを使わないため、ネットワークが不安定な環境でも確実に
-      動く（詳細はREADMEの「ATOM Lite⇔CamS3 直結シャッター」参照）。ただしダブルクリックの
-      再印刷指示は配線1本では送れないため常にWiFi経由になる。</p>
-      <label style="margin-top:12px">CamS3のホスト名（WiFi経由の場合のみ使用）</label>
-      <input type="text" id="cams3Host" placeholder="m5cam.local">
-      <button class="primary full" id="cams3HostSaveBtn" style="margin-top:12px">保存</button>
-      <div class="msg" id="cams3HostMsg"></div>
-    </div>
   </div>
 
   <footer>m5web · M5Stack ATOM Printer</footer>
