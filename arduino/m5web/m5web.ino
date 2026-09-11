@@ -1,22 +1,3 @@
-// m5web — Arduino IDE build of the same firmware as ../../src/main.cpp.
-// This folder is a flat-file mirror of ../../src + ../../data, kept in sync
-// manually because the Arduino IDE requires every source file to sit
-// directly inside a folder named after the .ino (no subfolders, unlike
-// PlatformIO's src/ layout). If you change one copy, mirror the change in
-// the other.
-//
-// Board setup:
-//   1. Boards Manager URL: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-//   2. Install "esp32" by Espressif Systems, then select board "M5Atom".
-//   3. Tools > Partition Scheme: any scheme with a SPIFFS/LittleFS region
-//      (e.g. "Default 4MB with spiffs").
-//   4. Library Manager: install "TJpg_Decoder" by Bodmer (see
-//      jpeg_print.h/.cpp, /api/print/photo) and "JPEGENC" by bitbank2
-//      (see jpeg_capture.h/.cpp, GET /capture) — the only two external
-//      dependencies this firmware has.
-//   5. Upload this sketch normally (Sketch > Upload), then upload the
-//      data/ folder to LittleFS — see README.md for the plugin needed.
-
 #include <Arduino.h>
 #include <esp32-hal-bt.h>
 
@@ -34,8 +15,13 @@
 //   single short press -> ask CamS3 (see cams3_remote.h, 「CamS3リモート
 //     シャッター」設定カード) to take a photo — the same "shutter" action
 //     its own web UIの撮影ボタン triggers, regardless of which of CamS3's
-//     two modes is active. CamS3-only; there's no equivalent trigger for
-//     the UART-linked M5StickV, which decides on its own when to capture.
+//     two modes is active. Goes over WiFi (HTTP) by default, or a direct
+//     GPIO25->CamS3 GPIO0 wire if the card's 接続方式 is switched to 配線直結
+//     (see cams3_remote.h's ConnMode / README.md's「ATOM Lite⇔CamS3
+//     直結シャッター」section) — same trigger either way from this
+//     function's point of view. CamS3-only; there's no equivalent trigger
+//     for the UART-linked M5StickV, which decides on its own when to
+//     capture.
 //   double-click (two short presses within kDoubleTapWindowMs of each
 //     other) -> "print": reprints the last M5StickV camera frame (if any)
 //     *and* asks CamS3 to reprint its own newest gallery entry (if any —

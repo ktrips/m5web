@@ -15,8 +15,13 @@
 //   single short press -> ask CamS3 (see cams3_remote.h, 「CamS3リモート
 //     シャッター」設定カード) to take a photo — the same "shutter" action
 //     its own web UIの撮影ボタン triggers, regardless of which of CamS3's
-//     two modes is active. CamS3-only; there's no equivalent trigger for
-//     the UART-linked M5StickV, which decides on its own when to capture.
+//     two modes is active. Goes over WiFi (HTTP) by default, or a direct
+//     GPIO25->CamS3 GPIO0 wire if the card's 接続方式 is switched to 配線直結
+//     (see cams3_remote.h's ConnMode / README.md's「ATOM Lite⇔CamS3
+//     直結シャッター」section) — same trigger either way from this
+//     function's point of view. CamS3-only; there's no equivalent trigger
+//     for the UART-linked M5StickV, which decides on its own when to
+//     capture.
 //   double-click (two short presses within kDoubleTapWindowMs of each
 //     other) -> "print": reprints the last M5StickV camera frame (if any)
 //     *and* asks CamS3 to reprint its own newest gallery entry (if any —

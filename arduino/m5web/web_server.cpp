@@ -663,11 +663,17 @@ void handlePrinterSettingsSet() {
 }
 
 void handleCamS3SettingsGet() {
-    server.send(200, "application/json", "{\"host\":\"" + jsonEscape(CamS3Remote::host().c_str()) + "\"}");
+    String connMode = CamS3Remote::connMode() == CamS3Remote::ConnMode::kWired ? "wired" : "wifi";
+    server.send(200, "application/json",
+                "{\"host\":\"" + jsonEscape(CamS3Remote::host().c_str()) + "\",\"connMode\":\"" + connMode + "\"}");
 }
 
 void handleCamS3SettingsSet() {
     if (server.hasArg("host")) CamS3Remote::setHost(server.arg("host"));
+    if (server.hasArg("connMode")) {
+        CamS3Remote::setConnMode(server.arg("connMode") == "wired" ? CamS3Remote::ConnMode::kWired
+                                                                     : CamS3Remote::ConnMode::kWifi);
+    }
     sendPlain(200, "OK");
 }
 

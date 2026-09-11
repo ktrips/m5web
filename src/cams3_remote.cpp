@@ -19,8 +19,17 @@ constexpr const char *kDefaultHost = "m5cam.local";
 // leave the ATOM feeling stuck for 20 seconds.
 constexpr unsigned long kTimeoutMs = 10000;
 
+// See cams3_remote.h's ConnMode doc comment / README.md's「ATOM Lite⇔CamS3
+// 直結シャッター」section for the wiring this pin is for. Chosen from the
+// ATOM Lite's otherwise-unused header pins — G32/G26 are CameraLink's UART
+// to the M5StickV, G23/G33 default to the printer UART (both configurable,
+// see printer.h), G27 drives the onboard LED, G39 is the button itself.
+constexpr uint8_t kWiredTriggerPin = 25;
+constexpr unsigned long kWiredPulseMs = 250;  // same duration atomMatrix.ino uses, for the same reason
+
 Preferences prefs;
 String currentHost = kDefaultHost;
+ConnMode currentConnMode = ConnMode::kWifi;
 
 bool postOrGet(const String &path, bool usePost) {
     WiFiClient client;
@@ -39,12 +48,20 @@ bool postOrGet(const String &path, bool usePost) {
     }
     return true;
 }
+
+const char *connModeName(ConnMode m) { return m == ConnMode::kWired ? "wired" : "wifi"; }
+ConnMode connModeFromName(const String &s) { return s == "wired" ? ConnMode::kWired : ConnMode::kWifi; }
+
 }  // namespace
 
 void begin() {
     prefs.begin("m5web_cams3", false);
     currentHost = prefs.getString("host", kDefaultHost);
     if (currentHost.length() == 0) currentHost = kDefaultHost;
+    currentConnMode = connModeFromName(prefs.getString("connMode", "wifi"));
+
+    pinMode(kWiredTriggerPin, OUTPUT);
+    digitalWrite(kWiredTriggerPin, HIGH);  // idle high — CamS3's GPIO0 is INPUT_PULLUP, active LOW
 }
 
 String host() { return currentHost; }
@@ -54,7 +71,24 @@ void setHost(const String &h) {
     prefs.putString("host", currentHost);
 }
 
-bool triggerShutter() { return postOrGet("/shutter", false); }
+ConnMode connMode() { return currentConnMode; }
+
+void setConnMode(ConnMode m) {
+    currentConnMode = m;
+    prefs.putString("connMode", connModeName(m));
+    Serial.printf("[cams3_remote] connection mode set to %s\n", connModeName(m));
+}
+
+bool triggerShutter() {
+    if (currentConnMode == ConnMode::kWired) {
+        Serial.println("[cams3_remote] wired mode: pulsing trigger pin LOW");
+        digitalWrite(kWiredTriggerPin, LOW);
+        delay(kWiredPulseMs);
+        digitalWrite(kWiredTriggerPin, HIGH);
+        return true;  // see ConnMode's doc comment — no way to confirm CamS3 actually captured
+    }
+    return postOrGet("/shutter", false);
+}
 
 bool reprintLatest() { return postOrGet("/api/gallery/reprint-latest", true); }
 
