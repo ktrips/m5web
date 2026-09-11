@@ -134,12 +134,27 @@
   </div>
 
   <div class="tabs">
-    <button type="button" class="tab-btn active" data-tab="camera">撮影</button>
-    <button type="button" class="tab-btn" data-tab="upload">アップロード</button>
+    <button type="button" class="tab-btn active" data-tab="camera">カメラ・画像</button>
     <button type="button" class="tab-btn" data-tab="settings">設定</button>
   </div>
 
   <div class="tab-content" id="tabCamera">
+    <div class="card">
+      <h2>🔆 画像デフォルト: 明るさ・コントラスト</h2>
+      <p class="meta">カメラ・写真アップロード共通の初期値です。</p>
+      <div class="grid2">
+        <div>
+          <label>明るさ <span id="defaultBrightnessVal">0</span></label>
+          <input type="range" id="defaultBrightness" min="-100" max="100" value="0">
+        </div>
+        <div>
+          <label>コントラスト <span id="defaultContrastVal">0</span></label>
+          <input type="range" id="defaultContrast" min="-100" max="100" value="0">
+        </div>
+      </div>
+      <p class="meta">次に撮影・選択する写真から反映されます。</p>
+    </div>
+
     <div class="card">
       <h2>📸 撮影</h2>
       <p class="meta" id="captureModeHint">撮影方式を確認中…</p>
@@ -162,11 +177,9 @@
       <div class="msg" id="ownCamMsg"></div>
 
       <p class="meta">印刷した写真は下の「ギャラリー」に追加されます（再印刷・削除が可能）。
-      俳句を添えて印刷したい場合は「アップロード」タブから同じ写真を選び直してください。</p>
+      俳句を添えて印刷したい場合は下の「画像を印刷」カードから同じ写真を選び直してください。</p>
     </div>
-  </div>
 
-  <div class="tab-content hidden" id="tabUpload">
     <div class="card">
       <h2>🖨️ 画像を印刷</h2>
       <label class="file-btn primary full" for="fileInput">写真を選択…</label>
@@ -272,18 +285,8 @@
         <input type="radio" name="ownCamMode" id="ownCamModePreview" value="preview" checked>
         <label for="ownCamModePreview" style="margin:0;color:var(--text)">プレビュー確認方式（確認してから印刷、デフォルト）</label>
       </div>
-      <p class="meta">「撮影」タブでの撮影に適用されます。プレビュー確認方式では、撮った写真を
+      <p class="meta">「カメラ・画像」タブでの撮影に適用されます。プレビュー確認方式では、撮った写真を
       画面で確認してから「印刷」ボタンを押すまで印刷されません。</p>
-    </div>
-
-    <div class="card">
-      <h2>🔆 デフォルト: 明るさ・コントラスト</h2>
-      <p class="meta">カメラ・写真アップロード共通の初期値です。</p>
-      <label>明るさ <span id="defaultBrightnessVal">0</span></label>
-      <input type="range" id="defaultBrightness" min="-100" max="100" value="0">
-      <label>コントラスト <span id="defaultContrastVal">0</span></label>
-      <input type="range" id="defaultContrast" min="-100" max="100" value="0">
-      <p class="meta">次に撮影・選択する写真から反映されます。</p>
     </div>
 
     <div class="card">
@@ -343,7 +346,7 @@
         <label for="haikuAutoPrint" style="margin:0;color:var(--text)">自動生成＋自動印刷</label>
       </div>
       <p class="meta">ページを開いたブラウザが処理するため、<b>このページを開いたままにしてください</b>
-      （要OpenAI APIキー。「アップロード」タブでの写真選択に適用されます）。</p>
+      （要OpenAI APIキー。「画像を印刷」カードでの写真選択に適用されます）。</p>
       <div class="msg" id="haikuMsg"></div>
     </div>
 
@@ -961,7 +964,7 @@ initLocationBadge();
 
 // ---------- tabs ----------
 
-const TAB_CONTENT_ID = { camera: "tabCamera", upload: "tabUpload", settings: "tabSettings" };
+const TAB_CONTENT_ID = { camera: "tabCamera", settings: "tabSettings" };
 
 document.querySelectorAll(".tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
