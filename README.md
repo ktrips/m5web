@@ -762,6 +762,47 @@ G25はATOM Lite側で他に使っていないピンから選定（G32/G26はM5St
 
 この機能は実機での動作確認ができていない。
 
+## ATOM Lite⇔ATOM Matrix フラッシュ表示
+
+ATOM Matrix連携（前述）の逆方向——**ATOM Lite本体のボタン**でCamS3のシャッターを切る際に、
+別途用意したATOM Matrixの5x5 LEDマトリクスを「フラッシュ＋結果表示」として使える
+（`src/matrix_signal.*`、ATOM Matrix側は
+[`arduino/atomMatrix/atomMatrix.ino`](arduino/atomMatrix/atomMatrix.ino)の
+`checkLiteSignals()`）。ATOM Matrix自身のボタンでCamS3を直結操作する機能（前述）とは独立
+していて、同じATOM Matrixが両方の役割を同時に持てる（配線するピンが別なので競合しない）。
+
+### 配線
+
+ジャンパー線2本＋GND共有（分かりやすさのため両端で同じピン番号を使用）:
+
+| ATOM Lite | ATOM Matrix | 備考 |
+|---|---|---|
+| G21 | G21 | シャッター実行中はHIGH、それ以外はLOW（「フラッシュ」信号） |
+| G22 | G22 | シャッター成功時のみ約100ms HIGHパルス（「成功」信号） |
+| GND | GND | 必須 |
+
+配線しなくても動作に支障はない——ATOM Lite側はこの2ピンを駆動するだけ、ATOM Matrix側も
+何も繋がっていなければLOWを読み続けるだけで無害。
+
+### 動作
+
+1. ATOM Liteのボタンをシングルクリックすると、G21がHIGHになる → ATOM Matrixが即座に
+   白色点灯（フラッシュのように光る）。
+2. CamS3への撮影指示（WiFi経由・配線直結どちらでも、[使い方](#使い方)・
+   [ATOM Lite⇔CamS3 直結シャッター](#atom-lite⇔cams3-直結シャッター)参照）が完了すると
+   G21がLOWに戻る——ATOM Matrixの白も消灯。
+3. 指示が成功していれば、続けてG22が約100msだけHIGHになる → ATOM Matrixが緑色に3回点滅。
+
+### 制約
+
+- **緑点滅は「ATOM Liteが成功と判断した」ことの合図であり、CamS3が実際に撮影・印刷まで
+  完了したことの確認ではない**——WiFi経由なら「HTTPが200番台を返した」、配線直結モードなら
+  「パルスを送った」というだけの意味（詳細は[ATOM Lite⇔CamS3 直結シャッター](#atom-lite⇔cams3-直結シャッター)
+  の制約の節）。実際の結果はCamS3自身のLED・シリアルログで確認すること。
+- 音は出ない（ATOM Matrixにスピーカー非搭載、前述の[ATOM Matrix連携](#atom-matrix連携camS3の有線シャッター)
+  と同じ）。
+- この機能は実機での動作確認ができていない。
+
 ## 俳句生成（OpenAI連携）
 
 プリントタブの「カメラ（M5StickV/CamS3）」カード・「画像を印刷」カード、どちらにも「俳句を作る」

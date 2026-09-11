@@ -28,17 +28,40 @@
 // low well after CamS3 has already booted), but don't power up or reset
 // CamS3 while this board happens to be mid-pulse.
 //
+// Optional second wiring, for mirroring ATOM Lite's own button instead of
+// (or alongside) this board's own — see src/matrix_signal.h:
+//   ATOM Lite G21 (flash signal)   -> ATOM Matrix G21 (kLiteFlashPin)
+//   ATOM Lite G22 (success signal) -> ATOM Matrix G22 (kLiteSuccessPin)
+//   ATOM Lite GND                  -> ATOM Matrix GND (same ground as above)
+// Leave unwired if this board is only ever used for its own button.
+//
+// This board does double duty — both roles share the same LED matrix and
+// don't conflict (a person only presses one button at a time):
+//   (1) Its own button triggers CamS3 directly (above).
+//   (2) It can ALSO mirror the ATOM Lite's own button as a flash/result
+//       display (see src/matrix_signal.* and README.md's「ATOM Lite⇔ATOM
+//       Matrix フラッシュ表示」section) — wire ATOM Lite G21/G22 to this
+//       board's same-numbered pins (+ shared GND) and checkLiteSignals()
+//       below reflects them on the matrix. Entirely optional: with
+//       nothing wired to G21/G22, they just read low and do nothing.
+//
 // LED matrix feedback (5x5 SK6812, G27, driven via FastLED — see
-// setMatrix()/blinkMatrixGreen()):
-//   - WHITE, solid, for as long as the button is held down (immediate
-//     "you're pressing it" feedback).
-//   - GREEN, 3x blink, once the trigger pulse to CamS3 has been sent in
-//     full. This means "this board successfully sent the signal" — there
-//     is no wire back from CamS3, so it is NOT a confirmation that CamS3
-//     actually captured/printed a photo (see CamS3's own LED — GPIO14 —
-//     or its serial log for that). If the press is swallowed by the
-//     debounce window (see kDebounceMs) instead of triggering, the white
-//     just turns off with no green blink, since nothing was sent.
+// setMatrix()/blinkMatrixGreen()), same visual language for both roles:
+//   - WHITE, solid, for as long as this board's own button is held down,
+//     OR for as long as ATOM Lite's G21 signal is high (its own button
+//     held / CamS3 trigger in flight).
+//   - GREEN, 3x blink, once (a) this board's own trigger pulse to CamS3
+//     has been sent in full, or (b) a rising edge is seen on ATOM Lite's
+//     G22 signal. Either way this means "the signal was sent/seen", not a
+//     confirmation CamS3 actually captured/printed anything — there is no
+//     wire back from CamS3 in case (a), and case (b) only repeats
+//     whatever ATOM Lite itself already decided (see main.cpp's
+//     triggerCamS3Shutter() — same caveat applies there for its own
+//     wired-CamS3-link mode). Check CamS3's own LED (GPIO14) or serial
+//     log for real confirmation.
+//   - For this board's own button specifically: if the press is swallowed
+//     by the debounce window (see kDebounceMs) instead of triggering, the
+//     white just turns off with no green blink, since nothing was sent.
 //   - No sound: this board has no onboard speaker/buzzer (unlike M5Stack
 //     ATOM Echo, which does) — LED-only feedback is all that's possible
 //     without adding external hardware.
@@ -73,10 +96,19 @@ constexpr uint8_t kSuccessBlinkCount = 3;
 constexpr unsigned long kSuccessBlinkOnMs = 150;
 constexpr unsigned long kSuccessBlinkOffMs = 150;
 
+// Optional inputs from an ATOM Lite's own button (see the second wiring
+// block above / src/matrix_signal.h) — read as plain digitalRead(), no
+// pull resistor needed since ATOM Lite actively drives both HIGH/LOW
+// (never left floating).
+constexpr uint8_t kLiteFlashPin = 21;
+constexpr uint8_t kLiteSuccessPin = 22;
+
 CRGB matrixLeds[kMatrixCount];
 
 unsigned long buttonDownSinceMs = 0;
 unsigned long lastTriggerMs = 0;
+bool liteFlashActive = false;
+bool liteSuccessWasHigh = false;
 
 void setMatrix(const CRGB &color) {
     fill_solid(matrixLeds, kMatrixCount, color);
@@ -123,6 +155,26 @@ void checkButton() {
     }
 }
 
+// Mirrors an ATOM Lite's own button (see src/matrix_signal.h /
+// main.cpp's triggerCamS3Shutter()) onto this board's matrix, if wired —
+// see the file header's second wiring block. No-op if nothing is
+// connected to kLiteFlashPin/kLiteSuccessPin (they just read low).
+void checkLiteSignals() {
+    bool flash = digitalRead(kLiteFlashPin) == HIGH;
+    if (flash != liteFlashActive) {
+        liteFlashActive = flash;
+        setMatrix(flash ? CRGB::White : CRGB::Black);
+    }
+
+    bool successHigh = digitalRead(kLiteSuccessPin) == HIGH;
+    if (successHigh && !liteSuccessWasHigh) {
+        Serial.println("[atomMatrix] ATOM Lite success signal seen");
+        blinkMatrixGreen();
+        setMatrix(liteFlashActive ? CRGB::White : CRGB::Black);  // restore whatever the flash line still says
+    }
+    liteSuccessWasHigh = successHigh;
+}
+
 void setup() {
     Serial.begin(115200);
     Serial.println("\n=== atomMatrix starting ===");
@@ -130,6 +182,8 @@ void setup() {
     pinMode(kButtonPin, INPUT);
     pinMode(kTriggerOutPin, OUTPUT);
     digitalWrite(kTriggerOutPin, HIGH);  // idle high — CamS3's GPIO0 is INPUT_PULLUP, active LOW
+    pinMode(kLiteFlashPin, INPUT);
+    pinMode(kLiteSuccessPin, INPUT);
 
     FastLED.addLeds<WS2812, kMatrixPin, GRB>(matrixLeds, kMatrixCount);
     FastLED.setBrightness(kMatrixBrightness);
@@ -140,4 +194,5 @@ void setup() {
 
 void loop() {
     checkButton();
+    checkLiteSignals();
 }

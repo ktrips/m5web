@@ -6,6 +6,7 @@
 #include "gallery.h"
 #include "haiku.h"
 #include "led.h"
+#include "matrix_signal.h"
 #include "openai.h"
 #include "printer.h"
 #include "web_server.h"
@@ -21,7 +22,10 @@
 //     直結シャッター」section) — same trigger either way from this
 //     function's point of view. CamS3-only; there's no equivalent trigger
 //     for the UART-linked M5StickV, which decides on its own when to
-//     capture.
+//     capture. If an ATOM Matrix is wired up as a companion flash/result
+//     display (see matrix_signal.h, optional), it shows solid white for
+//     the duration of this trigger and blinks green a few times if it
+//     succeeded.
 //   double-click (two short presses within kDoubleTapWindowMs of each
 //     other) -> "print": reprints the last M5StickV camera frame (if any)
 //     *and* asks CamS3 to reprint its own newest gallery entry (if any —
@@ -51,8 +55,12 @@ unsigned long pendingClickMs = 0;
 
 void triggerCamS3Shutter() {
     Serial.println("[button] single-click: triggering CamS3 shutter");
-    if (CamS3Remote::triggerShutter()) {
+    MatrixSignal::setFlash(true);  // no-op on the ATOM Lite itself if no ATOM Matrix is wired up
+    bool ok = CamS3Remote::triggerShutter();
+    MatrixSignal::setFlash(false);
+    if (ok) {
         Led::notifyShutterOk();
+        MatrixSignal::pulseSuccess();
     } else {
         Serial.println("[button] CamS3 shutter trigger failed (unreachable / not configured?)");
     }
@@ -146,6 +154,7 @@ void setup() {
     CameraLink::begin();
     OpenAI::begin();
     CamS3Remote::begin();
+    MatrixSignal::begin();
     WifiManager::begin();
     WebServer_::begin();
     Serial.println("=== m5web ready ===");
