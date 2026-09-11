@@ -666,6 +666,51 @@ ATOM Printer Kitのプリンター本体をそのままCamS3に繋ぎ替える�
 - PSRAM無しでは`fb_location = CAMERA_FB_IN_PSRAM`の指定によりカメラ初期化に失敗する見込み
   ——Arduino IDEの「PSRAM: OPI PSRAM」設定を必ず確認すること。
 
+## ATOM Matrix連携（CamS3の有線シャッター）
+
+CamS3のシャッターは前述のとおり[GPIO0への外部ボタン](#camS3カメラ連携)、または
+ATOM Lite側からのWiFi経由リモート操作（`src/cams3_remote.*`、ATOM Liteのボタン単押し→
+`http://m5cam.local/shutter`）で切れるが、後者はWiFi/mDNSの不調に左右される。**ATOM Matrix
+（別途用意する3台目のM5Stack ATOM系デバイス）の内蔵ボタンを、CamS3のGPIO0へ直結**すること
+で、WiFiを一切使わない有線シャッターとしても使える
+（[`arduino/atomMatrix/atomMatrix.ino`](arduino/atomMatrix/atomMatrix.ino)）。ATOM Matrixは
+ATOM Liteと同じESP32-PICO-D4・同じボタンピン（G39）を持つ別機種（5x5 RGBマトリクスLED
+搭載）——このスケッチはボタン入力にしか使っていないので、電気的にはATOM Lite/ATOMS3など
+同系統の他機種でも代用できる見込み（未検証）。
+
+### 配線
+
+ジャンパー線2本のみ（Grove不要、ピンヘッダ直結）:
+
+| ATOM Matrix | CamS3 | 備考 |
+|---|---|---|
+| G26 | GPIO0 | ボタン押下中のみLOWを出力（他は常時HIGH） |
+| GND | GND | 信号線を意味あるものにするため必須 |
+
+**⚠️ CamS3のGPIO0はESP32の起動モード決定ピン（ブートストラップピン）**——電源投入・リセットの
+瞬間にLOWだと書き込みモードで起動してしまう。通常運用（起動済みのCamS3に対してボタンを押す）
+では問題にならないが、ATOM Matrix側がLOWを出している最中にCamS3の電源を入れる／リセットする
+ことは避けること。
+
+### 導入手順
+
+1. Arduino IDEでボード「M5Atom」を選択して[`atomMatrix.ino`](arduino/atomMatrix/atomMatrix.ino)
+   を書き込む。追加ライブラリは不要（`pinMode`/`digitalRead`/`digitalWrite`/`Serial`のみ）。
+2. 上表の通り配線する。
+3. ATOM Matrixのボタンを押すと、CamS3のGPIO0が約250ms（`kPulseMs`）だけLOWになり、CamS3側は
+   物理ボタンが押されたのと区別なく撮影を開始する——CamS3側の設定・挙動は
+   [CamS3カメラ連携](#camS3カメラ連携)のGPIO0ボタンの節とまったく同じ
+   （`OwnCamera::mode()`が「事後閲覧方式」なら撮影→ATOM Liteへ転送→印刷まで自動）。
+
+### 既知の注意点
+
+このスケッチは実機での動作確認ができていない。ATOM Matrixの5x5 RGBマトリクスLED（G27）を
+使った押下時の視覚フィードバックは意図的に省略している——ATOM Liteの単色LED（`led.cpp`）が
+使っている`neopixelWrite()`はWS2812系LED1個専用で、25個のマトリクスを光らせるには
+FastLEDやAdafruit_NeoPixelなど別ライブラリの追加が必要になるため、最小構成を優先した。
+シリアルログ（115200bps）のみが動作確認の手段——必要であればライブラリを追加して光らせる
+処理を足すこと。
+
 ## 俳句生成（OpenAI連携）
 
 プリントタブの「カメラ（M5StickV/CamS3）」カード・「画像を印刷」カード、どちらにも「俳句を作る」
@@ -859,6 +904,9 @@ maixpy/
   shutter.wav          シャッター音（16kHz/mono/16bit, 180ms、m5web_capture.pyが再生）
 arduino/m5paper/
   m5paper.ino          M5PaperColor用スケッチ（詳細は[M5PaperColor連携](#m5papercolor連携)）
+arduino/atomMatrix/
+  atomMatrix.ino       ATOM MatrixをCamS3の有線シャッターにするスケッチ（詳細は
+                       [ATOM Matrix連携](#atom-matrix連携camS3の有線シャッター)）
 ```
 
 ## API
